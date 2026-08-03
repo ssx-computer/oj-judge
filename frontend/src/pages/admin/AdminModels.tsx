@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import type { AIModelConfig } from '../../api/client';
 import { useToastStore } from '../../store/toast';
@@ -15,13 +15,7 @@ export default function AdminModels() {
   const [aiModelsSaving, setAiModelsSaving] = useState(false);
   const [aiModelsLoaded, setAiModelsLoaded] = useState(false);
 
-  useEffect(() => {
-    if (!aiModelsLoaded) {
-      fetchAIModels();
-    }
-  }, []);
-
-  const fetchAIModels = async () => {
+  const fetchAIModels = useCallback(async () => {
     setAiModelsLoading(true);
     try {
       const data = await api.getAIModels();
@@ -32,7 +26,14 @@ export default function AdminModels() {
     } finally {
       setAiModelsLoading(false);
     }
-  };
+  }, [addToast]);
+
+  useEffect(() => {
+    if (!aiModelsLoaded) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchAIModels();
+    }
+  }, [fetchAIModels, aiModelsLoaded]);
 
   const handleSaveAIModels = async () => {
     setAiModelsSaving(true);

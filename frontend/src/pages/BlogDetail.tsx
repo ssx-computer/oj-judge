@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -23,12 +23,7 @@ export default function BlogDetail() {
   const [postingComment, setPostingComment] = useState(false);
   useDocumentTitle(blog?.title || t('blogs.title'));
 
-  useEffect(() => {
-    fetchBlog();
-    fetchComments();
-  }, [blogId]);
-
-  const fetchBlog = async () => {
+  const fetchBlog = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getBlog(blogId);
@@ -44,16 +39,23 @@ export default function BlogDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [blogId, user, addToast]);
 
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
     try {
       const data = await api.getBlogComments(blogId, { pageSize: 100 });
       setComments(data.comments);
     } catch (e) {
       console.error('Failed to fetch comments:', e);
     }
-  };
+  }, [blogId]);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    fetchBlog();
+    fetchComments();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [fetchBlog, fetchComments]);
 
   const handleLike = async () => {
     try {

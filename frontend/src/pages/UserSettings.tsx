@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { useToastStore } from '../store/toast';
@@ -16,13 +16,7 @@ export default function UserSettings() {
   const [selectedLang, setSelectedLang] = useState('python');
   const [templateContent, setTemplateContent] = useState('');
 
-  useEffect(() => {
-    fetchSettings();
-    fetchNotifyPrefs();
-    fetchTemplates();
-  }, []);
-
-  const fetchTemplates = async () => {
+  const fetchTemplates = useCallback(async () => {
     try {
       const data = await api.getTemplates();
       setTemplates(data.templates || []);
@@ -32,7 +26,33 @@ export default function UserSettings() {
     } catch {
       // ignore
     }
-  };
+  }, [selectedLang]);
+
+  const fetchNotifyPrefs = useCallback(async () => {
+    try {
+      const data = await api.getNotificationPreferences();
+      setNotifyPrefs(data.preferences || {});
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const data = await api.getUserSettings();
+      setSettings(data.settings || {});
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    fetchSettings();
+    fetchNotifyPrefs();
+    fetchTemplates();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [fetchSettings, fetchNotifyPrefs, fetchTemplates]);
 
   const handleSaveTemplate = async () => {
     try {
@@ -48,24 +68,6 @@ export default function UserSettings() {
     setSelectedLang(lang);
     const tpl = templates.find((t: any) => t.language === lang);
     setTemplateContent(tpl?.content || '');
-  };
-
-  const fetchNotifyPrefs = async () => {
-    try {
-      const data = await api.getNotificationPreferences();
-      setNotifyPrefs(data.preferences || {});
-    } catch {
-      // ignore
-    }
-  };
-
-  const fetchSettings = async () => {
-    try {
-      const data = await api.getUserSettings();
-      setSettings(data.settings || {});
-    } catch {
-      // ignore
-    }
   };
 
   const handleSave = async () => {

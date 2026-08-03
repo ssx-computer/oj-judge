@@ -39,7 +39,7 @@ export function renderMarkdown(text: string): string {
       mathBlocks.push(renderMath(expression.trim(), true));
       return placeholder;
     })
-    .replace(/(^|[^\\])\$([^\$\n][^\$]*?)\$/g, (_, prefix, expression) => {
+    .replace(/(^|[^\\])\$([^$\n][^$]*?)\$/g, (_, prefix, expression) => {
       const placeholder = `${MATH_PLACEHOLDER}${mathBlocks.length}@@`;
       mathBlocks.push(renderMath(expression.trim(), false));
       return `${prefix}${placeholder}`;

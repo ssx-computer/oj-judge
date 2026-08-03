@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -33,24 +33,7 @@ export default function Submissions() {
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, [userIdFilter]);
 
-  useEffect(() => {
-    if (user) fetchSubmissions();
-  }, [user, page, statusFilter, languageFilter, debouncedUserId]);
-
-  // Auto-refresh when there are pending/running submissions
-  useEffect(() => {
-    if (!user || loading) return;
-    const hasPending = submissions.some(s => s.status === 'pending' || s.status === 'running');
-    if (!hasPending) return;
-    const timer = setInterval(() => {
-      fetchSubmissions();
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [user, submissions, loading]);
-
-  const fetchSubmissions = async () => {
-    setLoading(true);
-    setLoadError(false);
+  const fetchSubmissions = useCallback(async () => {
     try {
       const data = await api.getSubmissions({
         page,
@@ -61,13 +44,30 @@ export default function Submissions() {
       });
       setSubmissions(data.submissions);
       setPagination(data.pagination);
+      setLoadError(false);
     } catch (e) {
       console.error('Failed to fetch submissions:', e);
       setLoadError(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, statusFilter, languageFilter, isAdmin, debouncedUserId]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (user) fetchSubmissions();
+  }, [user, fetchSubmissions]);
+
+  // Auto-refresh when there are pending/running submissions
+  useEffect(() => {
+    if (!user || loading) return;
+    const hasPending = submissions.some(s => s.status === 'pending' || s.status === 'running');
+    if (!hasPending) return;
+    const timer = setInterval(() => {
+      fetchSubmissions();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [user, submissions, loading, fetchSubmissions]);
 
   if (!user) {
     return (
@@ -140,7 +140,7 @@ export default function Submissions() {
         <div className="error-banner">
           <AlertCircle size={16} />
           <span>{t('common.loadError')}</span>
-          <button className="btn btn-secondary btn-sm" onClick={fetchSubmissions}>{t('common.retry')}</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); setLoadError(false); fetchSubmissions(); }}>{t('common.retry')}</button>
         </div>
       ) : submissions.length === 0 ? (
         <EmptyState icon={Inbox} title={t('submissions.noSubmissions')} description={t('submissions.noSubmissionsDesc')} />

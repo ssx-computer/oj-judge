@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { ArrowLeft } from 'lucide-react';
@@ -22,11 +22,7 @@ export default function BlogEditor() {
   const captchaRef = useRef<CaptchaHandle>(null);
   useDocumentTitle(blogId ? t('blogs.editBlog') : t('blogs.writeBlog'));
 
-  useEffect(() => {
-    if (blogId) fetchBlog();
-  }, [blogId]);
-
-  const fetchBlog = async () => {
+  const fetchBlog = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getBlog(blogId!);
@@ -34,14 +30,21 @@ export default function BlogEditor() {
         title: data.blog.title,
         content: data.blog.content,
         tags: data.blog.tags || '',
-        status: data.blog.status,
+        status: data.blog.status || 'draft',
       });
     } catch (e: any) {
       addToast('error', e.message || t('common.loadError'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [blogId, addToast]);
+
+  useEffect(() => {
+    if (blogId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchBlog();
+    }
+  }, [blogId, fetchBlog]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, type ProblemListItem, type Contest, type ProblemList, type Discussion, type RecommendedProblem, type RatingChange } from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { useSettingsStore } from '../store/settings';
 import {
@@ -11,6 +11,7 @@ import { DIFFICULTY_COLORS } from '../constants';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useSiteConfig } from '../hooks/useSiteConfig';
+import { useNow } from '../hooks/useNow';
 import AdSlot from '../components/AdSlot';
 import './Home.css';
 
@@ -25,38 +26,27 @@ interface Hitokoto {
 export default function Home() {
   const { user } = useAuthStore();
   const config = useSiteConfig();
-  const getAnnouncement = useSettingsStore((s) => s.getAnnouncement);
-  const [announcement, setAnnouncement] = useState('');
+  const rawAnnouncement = useSettingsStore((s) => s.settings.announcement || '');
   const [dismissedAnnouncement, setDismissedAnnouncement] = useState(false);
+  const announcement = dismissedAnnouncement ? '' : rawAnnouncement;
   const [hitokoto, setHitokoto] = useState<Hitokoto | null>(null);
   const [hitokotoError, setHitokotoError] = useState(false);
-  const [recentProblems, setRecentProblems] = useState<any[]>([]);
-  const [recentContests, setRecentContests] = useState<any[]>([]);
-  const [recentLists, setRecentLists] = useState<any[]>([]);
-  const [recentDiscussions, setRecentDiscussions] = useState<any[]>([]);
-  const [recommendations, setRecommendations] = useState<any[]>([]);
-  const [topUsers, setTopUsers] = useState<any[]>([]);
-  const [currentDate, setCurrentDate] = useState('');
+  const [recentProblems, setRecentProblems] = useState<ProblemListItem[]>([]);
+  const [recentContests, setRecentContests] = useState<Contest[]>([]);
+  const [recentLists, setRecentLists] = useState<ProblemList[]>([]);
+  const [recentDiscussions, setRecentDiscussions] = useState<Discussion[]>([]);
+  const [recommendations, setRecommendations] = useState<RecommendedProblem[]>([]);
+  const [topUsers, setTopUsers] = useState<RatingChange[]>([]);
+  const [currentDate] = useState(() => {
+    const d = new Date();
+    const weekdays = [t('home.sunday'), t('home.monday'), t('home.tuesday'), t('home.wednesday'), t('home.thursday'), t('home.friday'), t('home.saturday')];
+    return `${d.getFullYear()}${t('home.year')}${String(d.getMonth() + 1).padStart(2, '0')}${t('home.month')}${String(d.getDate()).padStart(2, '0')}${t('home.day')} ${weekdays[d.getDay()]}`;
+  });
   const [fetchError, setFetchError] = useState(false);
+  const now = useNow();
   useDocumentTitle(t('home.title'));
 
-  useEffect(() => {
-    const now = new Date();
-    const weekdays = [t('home.sunday'), t('home.monday'), t('home.tuesday'), t('home.wednesday'), t('home.thursday'), t('home.friday'), t('home.saturday')];
-    setCurrentDate(`${now.getFullYear()}${t('home.year')}${String(now.getMonth() + 1).padStart(2, '0')}${t('home.month')}${String(now.getDate()).padStart(2, '0')}${t('home.day')} ${weekdays[now.getDay()]}`);
-  }, []);
-
-  useEffect(() => {
-    // Get announcement from cached settings store
-    const ann = getAnnouncement();
-    if (ann) setAnnouncement(ann);
-    fetchAll();
-    fetchHitokoto();
-    if (user) fetchRecommendations();
-    fetchTopUsers();
-  }, [user]);
-
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async () => {
     try {
       setFetchError(false);
       const [problemsData, contestsData, listsData, discussionsData] = await Promise.allSettled([
@@ -77,7 +67,6 @@ export default function Home() {
       if (discussionsData.status === 'fulfilled') {
         setRecentDiscussions(discussionsData.value.discussions);
       }
-      // 如果全部失败则显示错误
       const allFailed = problemsData.status === 'rejected' && contestsData.status === 'rejected'
         && listsData.status === 'rejected' && discussionsData.status === 'rejected';
       if (allFailed) {
@@ -87,9 +76,9 @@ export default function Home() {
       console.error('Failed to fetch home data:', e);
       setFetchError(true);
     }
-  };
+  }, []);
 
-  const fetchHitokoto = async () => {
+  const fetchHitokoto = useCallback(async () => {
     try {
       setHitokotoError(false);
       const res = await fetch('https://v1.hitokoto.cn/?c=a&c=b&c=d&c=i&c=k');
@@ -98,28 +87,36 @@ export default function Home() {
     } catch {
       setHitokotoError(true);
     }
-  };
+  }, []);
 
-  const fetchRecommendations = async () => {
+  const fetchRecommendations = useCallback(async () => {
     try {
       const data = await api.getRecommendedProblems(6);
       setRecommendations(data.recommendations || []);
-    } catch (e) {
+    } catch {
       // ignore — recommendations are optional
     }
-  };
+  }, []);
 
-  const fetchTopUsers = async () => {
+  const fetchTopUsers = useCallback(async () => {
     try {
       const data = await api.getRankings(10);
       setTopUsers(data.rankings || []);
     } catch {
       // ignore
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    fetchAll();
+    fetchHitokoto();
+    if (user) fetchRecommendations();
+    fetchTopUsers();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [user, fetchAll, fetchHitokoto, fetchRecommendations, fetchTopUsers]);
 
   const getContestStatus = (contest: any) => {
-    const now = Date.now();
     const start = new Date(contest.start_time).getTime();
     const end = new Date(contest.end_time).getTime();
     if (now < start) return 'upcoming';

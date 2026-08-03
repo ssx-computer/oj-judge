@@ -1,4 +1,4 @@
-import { useAuthStore } from '../store/auth';
+﻿import { useAuthStore } from '../store/auth';
 import { getDeviceFingerprint } from '../utils/deviceFingerprint';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
@@ -19,6 +19,697 @@ interface ApiResponse<T> {
     message: string;
     code: string;
   };
+}
+
+// ── Shared ──
+interface Pagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+// ── User ──
+export interface User {
+  id: number;
+  username: string;
+  role: string;
+  permissions?: string[];
+  avatar_url?: string;
+  created_at?: string;
+  email?: string;
+  bio?: string;
+  signature?: string;
+  experience?: number;
+  level?: number;
+  banned?: number;
+  github_id?: number;
+  cpoauth_id?: string;
+  rating?: number;
+  max_rating?: number;
+  follower_count?: number;
+  following_count?: number;
+}
+
+interface UserStats {
+  solved_count: number;
+  submission_count: number;
+  accepted_count: number;
+  rating?: number;
+  max_rating?: number;
+  rank?: number;
+}
+
+// ── Problem ──
+interface ProblemBase {
+  id: number;
+  slug: string;
+  title: string;
+  difficulty?: string;
+  rating?: number;
+  tags?: string;
+  time_limit: number;
+  memory_limit: number;
+  judge_type?: string;
+  is_public?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProblemListItem extends ProblemBase {
+  pass_rate?: number | null;
+  submission_count?: number;
+  accepted_count?: number;
+}
+
+interface Problem extends ProblemBase {
+  description: string;
+  input_format?: string;
+  output_format?: string;
+  sample_input?: string;
+  sample_output?: string;
+  spj_language?: string;
+  pass_rate?: number | null;
+  submission_count?: number;
+  accepted_count?: number;
+}
+
+interface ProblemStats {
+  submission_count: number;
+  accepted_count: number;
+  pass_rate: number | null;
+}
+
+interface Testcase {
+  id?: number;
+  input: string;
+  expected_output: string;
+  is_sample?: number | boolean;
+  score?: number;
+  sort_order?: number;
+}
+
+// ── Submission ──
+interface Submission {
+  id: number;
+  user_id?: number;
+  problem_id: number;
+  language: string;
+  status: string;
+  score: number;
+  time_used?: number;
+  memory_used?: number;
+  source_code?: string;
+  details?: string;
+  created_at: string;
+  updated_at?: string;
+  contest_id?: number;
+  username?: string;
+  problem_title?: string;
+  problem_slug?: string;
+}
+
+interface SubmissionTestcase {
+  id?: number;
+  status: string;
+  time_used?: number;
+  memory_used?: number;
+  score?: number;
+  detail?: string;
+  sort_order?: number;
+}
+
+interface JudgeLog {
+  id: number;
+  submission_id: number;
+  log_type: string;
+  message: string;
+  created_at: string;
+}
+
+// ── Contest ──
+export interface Contest {
+  id: number;
+  title: string;
+  description?: string;
+  start_time: string;
+  end_time: string;
+  status?: string;
+  is_public?: number;
+  created_by?: number;
+  scoring_type?: string;
+  is_rated?: number;
+  allow_virtual?: number;
+  duration_minutes?: number;
+  rating_finalized?: number;
+  participant_count?: number;
+  is_registered?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ContestProblem {
+  id: number;
+  contest_id: number;
+  problem_id: number;
+  label?: string;
+  score?: number;
+  title?: string;
+  slug?: string;
+}
+
+interface ContestRanking {
+  rank: number;
+  user_id: number;
+  username: string;
+  avatar_url?: string;
+  score: number;
+  problems?: Record<string, { status: string; score: number; attempts?: number }>;
+}
+
+// ── Ticket ──
+interface Ticket {
+  id: number;
+  user_id: number;
+  title: string;
+  content: string;
+  category?: string;
+  status: string;
+  priority?: string;
+  created_at: string;
+  updated_at?: string;
+  username?: string;
+}
+
+interface TicketReply {
+  id: number;
+  ticket_id: number;
+  user_id: number;
+  content: string;
+  created_at: string;
+  username?: string;
+}
+
+// ── Problem List ──
+export interface ProblemList {
+  id: number;
+  title: string;
+  description?: string;
+  user_id: number;
+  is_public?: number;
+  created_at?: string;
+  updated_at?: string;
+  username?: string;
+  problem_count?: number;
+}
+
+interface ProblemListEntry {
+  id: number;
+  list_id: number;
+  problem_id: number;
+  sort_order?: number;
+  note?: string;
+  title?: string;
+  slug?: string;
+  difficulty?: string;
+}
+
+// ── Solution ──
+interface Solution {
+  id: number;
+  problem_id: number;
+  user_id: number;
+  title: string;
+  content: string;
+  language?: string;
+  vote_count: number;
+  view_count: number;
+  review_status?: string;
+  reject_reason?: string;
+  created_at: string;
+  updated_at?: string;
+  username?: string;
+  problem_title?: string;
+  is_voted?: boolean;
+}
+
+// ── Discussion ──
+export interface Discussion {
+  id: number;
+  problem_id?: number;
+  user_id: number;
+  title: string;
+  content: string;
+  category?: string;
+  reply_count: number;
+  view_count: number;
+  is_pinned?: number;
+  created_at: string;
+  updated_at?: string;
+  username?: string;
+  problem_title?: string;
+}
+
+interface DiscussionReply {
+  id: number;
+  discussion_id: number;
+  user_id: number;
+  content: string;
+  created_at: string;
+  username?: string;
+}
+
+// ── Team ──
+interface Team {
+  id: number;
+  name: string;
+  slug: string;
+  description?: string;
+  avatar_url?: string;
+  owner_id: number;
+  is_public?: number;
+  join_method?: string;
+  created_at?: string;
+  updated_at?: string;
+  member_count?: number;
+  username?: string;
+}
+
+interface TeamMember {
+  id: number;
+  team_id: number;
+  user_id: number;
+  role: string;
+  joined_at: string;
+  username?: string;
+  avatar_url?: string;
+}
+
+interface TeamAnnouncement {
+  id: number;
+  team_id: number;
+  user_id: number;
+  title: string;
+  content: string;
+  is_pinned?: number;
+  created_at: string;
+  updated_at?: string;
+  username?: string;
+}
+
+interface TeamDiscussion {
+  id: number;
+  team_id: number;
+  user_id: number;
+  title: string;
+  content: string;
+  is_pinned?: number;
+  reply_count: number;
+  view_count: number;
+  created_at: string;
+  updated_at?: string;
+  username?: string;
+}
+
+interface TeamDiscussionReply {
+  id: number;
+  discussion_id: number;
+  user_id: number;
+  content: string;
+  created_at: string;
+  username?: string;
+}
+
+interface TeamProblemSet {
+  id: number;
+  team_id: number;
+  user_id: number;
+  title: string;
+  description?: string;
+  is_public?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface TeamContest {
+  id: number;
+  team_id: number;
+  user_id: number;
+  title: string;
+  description?: string;
+  start_time: string;
+  end_time: string;
+  scoring_type?: string;
+  is_public?: number;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  participant_count?: number;
+  is_registered?: boolean;
+}
+
+interface TeamJoinRequest {
+  id: number;
+  team_id: number;
+  user_id: number;
+  message?: string;
+  status: string;
+  created_at: string;
+  username?: string;
+  avatar_url?: string;
+}
+
+// ── Blog ──
+interface Blog {
+  id: number;
+  user_id: number;
+  title: string;
+  content: string;
+  tags?: string;
+  status?: string;
+  view_count: number;
+  like_count: number;
+  comment_count: number;
+  created_at: string;
+  updated_at?: string;
+  username?: string;
+  avatar_url?: string;
+  liked?: boolean;
+}
+
+interface BlogComment {
+  id: number;
+  blog_id: number;
+  user_id: number;
+  content: string;
+  created_at: string;
+  username?: string;
+  avatar_url?: string;
+}
+
+// ── Notification ──
+export interface AppNotification {
+  id: number;
+  user_id: number;
+  type: string;
+  title: string;
+  content?: string;
+  link?: string;
+  is_read?: number;
+  created_at: string;
+}
+
+// ── Conversation / Message ──
+interface Conversation {
+  id: number;
+  created_at?: string;
+  updated_at?: string;
+  last_message?: string;
+  last_message_at?: string;
+  other_user?: User;
+  unread_count?: number;
+}
+
+interface Message {
+  id: number;
+  conversation_id: number;
+  sender_id: number;
+  content: string;
+  created_at: string;
+}
+
+// ── Training ──
+export interface TrainingPlan {
+  id: number;
+  title: string;
+  description?: string;
+  cover_image?: string;
+  category?: string;
+  difficulty?: string;
+  user_id: number;
+  is_official?: number;
+  sort_order?: number;
+  created_at?: string;
+  updated_at?: string;
+  username?: string;
+  chapter_count?: number;
+  problem_count?: number;
+  joined?: boolean;
+  progress?: number;
+  chapters?: TrainingChapter[];
+}
+
+export interface TrainingChapter {
+  id: number;
+  plan_id: number;
+  title: string;
+  description?: string;
+  sort_order?: number;
+  problems?: TrainingChapterProblem[];
+}
+
+export interface TrainingChapterProblem {
+  id: number;
+  chapter_id: number;
+  problem_id: number;
+  sort_order?: number;
+  note?: string;
+  title?: string;
+  slug?: string;
+  difficulty?: string;
+  solved?: boolean;
+}
+
+// ── Plagiarism ──
+interface PlagiarismReport {
+  id: number;
+  contest_id?: number;
+  submission_a: number;
+  submission_b: number;
+  similarity: number;
+  method?: string;
+  created_at: string;
+  user_a?: string;
+  user_b?: string;
+}
+
+// ── Problem Report ──
+interface ProblemReport {
+  id: number;
+  problem_id: number;
+  user_id: number;
+  type: string;
+  description: string;
+  status: string;
+  admin_reply?: string;
+  created_at: string;
+  updated_at?: string;
+  username?: string;
+  problem_title?: string;
+}
+
+// ── Collection ──
+export interface ProblemCollection {
+  id: number;
+  user_id: number;
+  name: string;
+  description?: string;
+  is_public?: number;
+  sort_order?: number;
+  created_at?: string;
+  updated_at?: string;
+  item_count?: number;
+  problem_count?: number;
+}
+
+export interface CollectionItem {
+  id: number;
+  collection_id: number;
+  problem_id: number;
+  note?: string;
+  sort_order?: number;
+  title?: string;
+  slug?: string;
+  difficulty?: string;
+  created_at?: string;
+  tags?: string;
+}
+
+// ── Upload ──
+interface Upload {
+  id: number;
+  user_id: number;
+  filename: string;
+  original_name: string;
+  file_type: string;
+  mime_type?: string;
+  size_bytes: number;
+  url?: string;
+  created_at: string;
+}
+
+// ── Achievement ──
+interface Achievement {
+  key?: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  achieved?: boolean;
+  achieved_at?: string;
+}
+
+// ── Note ──
+interface ProblemNote {
+  id?: number;
+  user_id?: number;
+  problem_id: number;
+  content: string;
+  is_public?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ── Code Template ──
+interface CodeTemplate {
+  id?: number;
+  user_id?: number;
+  language: string;
+  content: string;
+  name?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ── Audit / Ban ──
+interface AuditLog {
+  id: number;
+  user_id?: number;
+  username?: string;
+  ip: string;
+  device_fingerprint?: string;
+  page?: string;
+  action: string;
+  method: string;
+  path: string;
+  user_agent?: string;
+  created_at: string;
+}
+
+interface BannedIP {
+  id: number;
+  ip: string;
+  reason?: string;
+  banned_by?: number;
+  created_at: string;
+}
+
+interface BannedDevice {
+  id: number;
+  device_fingerprint: string;
+  reason?: string;
+  banned_by?: number;
+  created_at: string;
+}
+
+// ── Rating ──
+export interface RatingHistoryEntry {
+  contest_id?: number;
+  contest_title?: string;
+  old_rating: number;
+  new_rating: number;
+  delta: number;
+  reason?: string;
+  created_at: string;
+}
+
+export interface RatingChange {
+  user_id: number;
+  username?: string;
+  old_rating: number;
+  new_rating: number;
+  delta: number;
+  rank?: number;
+}
+
+// ── Tags ──
+interface TagCategory {
+  id: number;
+  name: string;
+  slug: string;
+  icon?: string;
+  sort_order?: number;
+  tags?: Tag[];
+}
+
+interface Tag {
+  id: number;
+  category_id?: number;
+  name: string;
+  slug: string;
+  sort_order?: number;
+  problem_count?: number;
+}
+
+// ── Recommendation ──
+export interface RecommendedProblem {
+  problem_id: number;
+  title: string;
+  slug: string;
+  difficulty?: string;
+  rating?: number;
+  reason: string;
+  score?: number;
+  tags?: string[];
+}
+
+// ── Search ──
+interface SearchResult {
+  type: string;
+  id: number;
+  title: string;
+  url?: string;
+  subtitle?: string;
+  snippet?: string;
+}
+
+export interface SearchSuggestion {
+  type: string;
+  text?: string;
+  url?: string;
+  id?: number;
+  title?: string;
+  subtitle?: string;
+  avatar_url?: string;
+}
+
+// ── SQL Admin ──
+interface TableColumn {
+  cid: number;
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+}
+
+// ── AI ──
+interface AIToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+}
+
+// Shape of streamed event data. Fields are unioned because the server emits
+// different payloads per event type; consumers only read fields matching the
+// `type` they branched on, so the widened contract is safe at runtime.
+export interface AIStreamData {
+  content?: string;
+  name?: string;
+  arguments?: Record<string, unknown>;
+  result_summary?: string;
+  tool_calls?: AIToolCall[];
+  message?: string;
+  [key: string]: unknown;
 }
 
 class ApiClient {
@@ -95,9 +786,10 @@ class ApiClient {
         }
 
         return result.data;
-      } catch (e: any) {
+      } catch (e: unknown) {
         // Network errors: retry
-        if (e.message?.includes('Network error') && attempt < MAX_RETRIES) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('Network error') && attempt < MAX_RETRIES) {
           await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
           continue;
         }
@@ -116,7 +808,7 @@ class ApiClient {
     if (params?.search) query.set('search', params.search);
     if (params?.tag) query.set('tag', params.tag);
     if (params?.difficulty) query.set('difficulty', params.difficulty);
-    return this.request<{ problems: any[]; pagination: any }>(`/problems?${query.toString()}`);
+    return this.request<{ problems: ProblemListItem[]; pagination: Pagination }>(`/problems?${query.toString()}`);
   }
 
   async getProblemTags() {
@@ -125,17 +817,17 @@ class ApiClient {
 
   // Tag categories tree
   async getTagCategories() {
-    return this.request<{ categories: any[] }>('/tags/categories');
+    return this.request<{ categories: TagCategory[] }>('/tags/categories');
   }
 
   // Tags tree with problem counts
   async getTagsTree() {
-    return this.request<{ categories: any[] }>('/tags/problems/tags-tree');
+    return this.request<{ categories: TagCategory[] }>('/tags/problems/tags-tree');
   }
 
   // Problem-specific tags
   async getProblemTagsById(problemId: number) {
-    return this.request<{ tags: any[] }>(`/problems/${problemId}/tags`);
+    return this.request<{ tags: Tag[] }>(`/problems/${problemId}/tags`);
   }
 
   // Set problem tags
@@ -151,41 +843,41 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ rankings: any[]; pagination: any }>(`/ratings/leaderboard?${query.toString()}`);
+    return this.request<{ rankings: RatingChange[]; pagination: Pagination }>(`/ratings/leaderboard?${query.toString()}`);
   }
 
   // User rating info
   async getUserRating(username: string) {
-    return this.request<{ rating: number; max_rating: number; history: any[] }>(`/users/${username}/rating`);
+    return this.request<{ rating: number; max_rating: number; history: RatingHistoryEntry[] }>(`/users/${username}/rating`);
   }
 
   async getProblem(slug: string) {
-    return this.request<{ problem: any; sampleTestcases: any[]; stats: any }>(`/problems/${slug}`);
+    return this.request<{ problem: Problem; sampleTestcases: Testcase[]; stats: ProblemStats }>(`/problems/${slug}`);
   }
 
   async getProblemLanguages(slug: string) {
-    return this.request<{ languages: any[] }>(`/problems/${slug}/languages`);
+    return this.request<{ languages: string[] }>(`/problems/${slug}/languages`);
   }
 
   async getRelatedProblems(slug: string, limit = 5) {
-    return this.request<{ problems: any[] }>(`/problems/${slug}/related?limit=${limit}`);
+    return this.request<{ problems: ProblemListItem[] }>(`/problems/${slug}/related?limit=${limit}`);
   }
 
-  async createProblem(data: any) {
+  async createProblem(data: Record<string, unknown>) {
     return this.request<{ id: number; message: string }>('/problems', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateProblem(id: number, data: any) {
+  async updateProblem(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/problems/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
-  async addTestcases(problemId: number, testcases: any[]) {
+  async addTestcases(problemId: number, testcases: Testcase[]) {
     return this.request<{ message: string; count: number }>(`/problems/${problemId}/testcases`, {
       method: 'POST',
       body: JSON.stringify(testcases),
@@ -207,27 +899,27 @@ class ApiClient {
     if (params?.status) query.set('status', params.status);
     if (params?.language) query.set('language', params.language);
     if (params?.user_id) query.set('user_id', params.user_id);
-    return this.request<{ submissions: any[]; pagination: any }>(`/submissions?${query.toString()}`);
+    return this.request<{ submissions: Submission[]; pagination: Pagination }>(`/submissions?${query.toString()}`);
   }
 
   async getSubmission(id: number) {
-    return this.request<{ submission: any }>(`/submissions/${id}`);
+    return this.request<{ submission: Submission }>(`/submissions/${id}`);
   }
 
   async getSubmissionTestcases(id: number) {
-    return this.request<{ testcases: any[] }>(`/submissions/${id}/testcases`);
+    return this.request<{ testcases: SubmissionTestcase[] }>(`/submissions/${id}/testcases`);
   }
 
   async getSubmissionLogs(id: number) {
-    return this.request<{ logs: any[] }>(`/submissions/${id}/logs`);
+    return this.request<{ logs: JudgeLog[] }>(`/submissions/${id}/logs`);
   }
 
   async exportSubmissions(format: 'csv' | 'json' = 'csv') {
-    return this.request<{ submissions?: any[] } | string>(`/submissions/export?format=${format}`);
+    return this.request<{ submissions?: Submission[] } | string>(`/submissions/export?format=${format}`);
   }
 
   async compareSubmissions(id1: number, id2: number) {
-    return this.request<{ submission_a: any; submission_b: any }>(`/submissions/compare/${id1}/${id2}`);
+    return this.request<{ submission_a: Submission; submission_b: Submission }>(`/submissions/compare/${id1}/${id2}`);
   }
 
   async rejudgeSubmission(id: number) {
@@ -237,7 +929,7 @@ class ApiClient {
   }
 
   async getMe() {
-    return this.request<{ user: any }>('/auth/me');
+    return this.request<{ user: User }>('/auth/me');
   }
 
   async getCaptcha() {
@@ -269,11 +961,11 @@ class ApiClient {
     const query = new URLSearchParams();
     if (limit) query.set('limit', String(limit));
     if (timeRange) query.set('timeRange', timeRange);
-    return this.request<{ rankings: any[] }>(`/rankings?${query.toString()}`);
+    return this.request<{ rankings: RatingChange[] }>(`/rankings?${query.toString()}`);
   }
 
   async getUserProfile() {
-    return this.request<{ user: any; stats: any; recent_submissions: any[] }>('/users/profile');
+    return this.request<{ user: User; stats: UserStats; recent_submissions: Submission[] }>('/users/profile');
   }
 
   async getUserSubmissions(params?: { page?: number; pageSize?: number; status?: string }) {
@@ -281,19 +973,19 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.status) query.set('status', params.status);
-    return this.request<{ submissions: any[]; pagination: any }>(`/users/submissions?${query.toString()}`);
+    return this.request<{ submissions: Submission[]; pagination: Pagination }>(`/users/submissions?${query.toString()}`);
   }
 
   async getUserSolved() {
-    return this.request<{ problems: any[] }>('/users/solved');
+    return this.request<{ problems: ProblemListItem[] }>('/users/solved');
   }
 
   async getUserContests() {
-    return this.request<{ contests: any[] }>('/users/contests');
+    return this.request<{ contests: Contest[] }>('/users/contests');
   }
 
   async getUserByUsername(username: string) {
-    return this.request<{ user: any; stats: any; solved_problems: any[]; recent_submissions: any[] }>(`/users/${username}`);
+    return this.request<{ user: User; stats: UserStats; solved_problems: ProblemListItem[]; recent_submissions: Submission[] }>(`/users/${username}`);
   }
 
   async getProblemStatus(problemId: number) {
@@ -321,19 +1013,19 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     const qs = query.toString();
-    return this.request<{ problems: any[]; pagination: any }>(`/problems/user/favorites${qs ? `?${qs}` : ''}`);
+    return this.request<{ problems: ProblemListItem[]; pagination: Pagination }>(`/problems/user/favorites${qs ? `?${qs}` : ''}`);
   }
 
   // ── Problem Collections ──
   async getCollections() {
-    return this.request<{ collections: any[] }>(`/collections`);
+    return this.request<{ collections: ProblemCollection[] }>(`/collections`);
   }
 
   async createCollection(data: { name: string; description?: string; is_public?: boolean }) {
     return this.request<{ id: number; message: string }>('/collections', { method: 'POST', body: JSON.stringify(data) });
   }
 
-  async updateCollection(id: number, data: any) {
+  async updateCollection(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/collections/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
@@ -342,7 +1034,7 @@ class ApiClient {
   }
 
   async getCollectionItems(id: number) {
-    return this.request<{ collection: any; items: any[] }>(`/collections/${id}/items`);
+    return this.request<{ collection: ProblemCollection; items: CollectionItem[] }>(`/collections/${id}/items`);
   }
 
   async addCollectionItem(collectionId: number, problemId: number, note?: string) {
@@ -359,7 +1051,7 @@ class ApiClient {
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
     const qs = query.toString();
-    return this.request<{ users: any[]; pagination: any }>(`/users/list${qs ? `?${qs}` : ''}`);
+    return this.request<{ users: User[]; pagination: Pagination }>(`/users/list${qs ? `?${qs}` : ''}`);
   }
 
   async updateUserRole(userId: number, role: string) {
@@ -387,7 +1079,7 @@ class ApiClient {
     return this.request<{
       users: number; problems: number; submissions: number; today_submissions: number;
       accepted: number; contests: number; lists: number; tickets: number; open_tickets: number;
-      recent_submissions: any[];
+      recent_submissions: Submission[];
     }>('/admin/stats');
   }
 
@@ -396,14 +1088,14 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
-    return this.request<{ problems: any[]; pagination: any }>(`/admin/problems?${query.toString()}`);
+    return this.request<{ problems: ProblemListItem[]; pagination: Pagination }>(`/admin/problems?${query.toString()}`);
   }
 
   async exportProblems() {
-    return this.request<{ problems: any[] }>('/admin/problems/export');
+    return this.request<{ problems: ProblemListItem[] }>('/admin/problems/export');
   }
 
-  async importProblems(payload: any[]) {
+  async importProblems(payload: Record<string, unknown>[]) {
     return this.request<{ imported: number; message: string }>('/admin/problems/import', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -417,7 +1109,7 @@ class ApiClient {
   }
 
   async getProblemTestcases(problemId: number) {
-    return this.request<{ testcases: any[] }>(`/problems/${problemId}/testcases`);
+    return this.request<{ testcases: Testcase[] }>(`/problems/${problemId}/testcases`);
   }
 
   async deleteTestcase(problemId: number, index: number) {
@@ -453,21 +1145,21 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.status) query.set('status', params.status);
-    return this.request<{ contests: any[]; pagination: any }>(`/contests?${query.toString()}`);
+    return this.request<{ contests: Contest[]; pagination: Pagination }>(`/contests?${query.toString()}`);
   }
 
   async getContest(id: number) {
-    return this.request<{ contest: any }>(`/contests/${id}`);
+    return this.request<{ contest: Contest }>(`/contests/${id}`);
   }
 
-  async createContest(data: any) {
+  async createContest(data: Record<string, unknown>) {
     return this.request<{ id: number; message: string }>('/contests', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateContest(id: number, data: any) {
+  async updateContest(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/contests/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -481,7 +1173,7 @@ class ApiClient {
   }
 
   async getContestProblems(id: number) {
-    return this.request<{ problems: any[] }>(`/contests/${id}/problems`);
+    return this.request<{ problems: ContestProblem[] }>(`/contests/${id}/problems`);
   }
 
   async registerContest(id: number) {
@@ -492,8 +1184,8 @@ class ApiClient {
 
   async getContestRankings(id: number) {
     return this.request<{
-      rankings: any[];
-      problems: any[];
+      rankings: ContestRanking[];
+      problems: ContestProblem[];
       scoring_type?: string;
       is_rated?: number;
       rating_finalized?: number;
@@ -515,11 +1207,11 @@ class ApiClient {
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.status) query.set('status', params.status);
     if (params?.category) query.set('category', params.category);
-    return this.request<{ tickets: any[]; pagination: any }>(`/tickets?${query.toString()}`);
+    return this.request<{ tickets: Ticket[]; pagination: Pagination }>(`/tickets?${query.toString()}`);
   }
 
   async getTicket(id: number) {
-    return this.request<{ ticket: any; replies: any[] }>(`/tickets/${id}`);
+    return this.request<{ ticket: Ticket; replies: TicketReply[] }>(`/tickets/${id}`);
   }
 
   async createTicket(data: { title: string; content: string; category?: string; priority?: string }) {
@@ -549,21 +1241,21 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
-    return this.request<{ lists: any[]; pagination: any }>(`/lists?${query.toString()}`);
+    return this.request<{ lists: ProblemList[]; pagination: Pagination }>(`/lists?${query.toString()}`);
   }
 
   async getProblemList(id: number) {
-    return this.request<{ list: any; items: any[] }>(`/lists/${id}`);
+    return this.request<{ list: ProblemList; items: ProblemListEntry[] }>(`/lists/${id}`);
   }
 
-  async createProblemList(data: any) {
+  async createProblemList(data: Record<string, unknown>) {
     return this.request<{ id: number; message: string }>('/lists', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateProblemList(id: number, data: any) {
+  async updateProblemList(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/lists/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -581,7 +1273,7 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ contests: any[]; pagination: any }>(`/admin/contests?${query.toString()}`);
+    return this.request<{ contests: Contest[]; pagination: Pagination }>(`/admin/contests?${query.toString()}`);
   }
 
   // Admin - Tickets
@@ -590,7 +1282,7 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.status) query.set('status', params.status);
-    return this.request<{ tickets: any[]; pagination: any }>(`/admin/tickets?${query.toString()}`);
+    return this.request<{ tickets: Ticket[]; pagination: Pagination }>(`/admin/tickets?${query.toString()}`);
   }
 
   // Admin - Problem Lists
@@ -598,12 +1290,12 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ lists: any[]; pagination: any }>(`/admin/lists?${query.toString()}`);
+    return this.request<{ lists: ProblemList[]; pagination: Pagination }>(`/admin/lists?${query.toString()}`);
   }
 
   // Admin - SQL Execute (super admin only)
   async executeSql(query: string, password?: string) {
-    return this.request<{ results?: any[]; meta?: any }>(`/admin/sql`, {
+    return this.request<{ results?: Record<string, unknown>[]; meta?: Record<string, unknown> }>(`/admin/sql`, {
       method: 'POST',
       body: JSON.stringify({ query, password }),
     });
@@ -615,32 +1307,32 @@ class ApiClient {
   }
 
   async getTableSchema(tableName: string) {
-    return this.request<{ schema: any[] }>(`/admin/sql/table/${tableName}/schema`);
+    return this.request<{ schema: TableColumn[] }>(`/admin/sql/table/${tableName}/schema`);
   }
 
   async getTableData(tableName: string, params?: { page?: number; pageSize?: number }) {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ rows: any[]; pagination: any }>(`/admin/sql/table/${tableName}/data?${query.toString()}`);
+    return this.request<{ rows: Record<string, unknown>[]; pagination: Pagination }>(`/admin/sql/table/${tableName}/data?${query.toString()}`);
   }
 
-  async insertTableRow(tableName: string, data: Record<string, any>) {
-    return this.request<{ meta: any }>(`/admin/sql/table/${tableName}/row`, {
+  async insertTableRow(tableName: string, data: Record<string, unknown>) {
+    return this.request<{ meta: Record<string, unknown> }>(`/admin/sql/table/${tableName}/row`, {
       method: 'POST',
       body: JSON.stringify({ data }),
     });
   }
 
-  async updateTableRow(tableName: string, data: Record<string, any>, where: Record<string, any>) {
-    return this.request<{ meta: any }>(`/admin/sql/table/${tableName}/row`, {
+  async updateTableRow(tableName: string, data: Record<string, unknown>, where: Record<string, unknown>) {
+    return this.request<{ meta: Record<string, unknown> }>(`/admin/sql/table/${tableName}/row`, {
       method: 'PUT',
       body: JSON.stringify({ data, where }),
     });
   }
 
-  async deleteTableRow(tableName: string, where: Record<string, any>, password: string) {
-    return this.request<{ meta: any }>(`/admin/sql/table/${tableName}/row`, {
+  async deleteTableRow(tableName: string, where: Record<string, unknown>, password: string) {
+    return this.request<{ meta: Record<string, unknown> }>(`/admin/sql/table/${tableName}/row`, {
       method: 'DELETE',
       body: JSON.stringify({ where, password }),
     });
@@ -653,11 +1345,11 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.sort) query.set('sort', params.sort);
-    return this.request<{ solutions: any[]; pagination: any }>(`/solutions?${query.toString()}`);
+    return this.request<{ solutions: Solution[]; pagination: Pagination }>(`/solutions?${query.toString()}`);
   }
 
   async getSolution(id: number) {
-    return this.request<{ solution: any; is_voted: boolean }>(`/solutions/${id}`);
+    return this.request<{ solution: Solution; is_voted: boolean }>(`/solutions/${id}`);
   }
 
   async createSolution(data: { problem_id: number; title: string; content: string; language?: string; captcha_uuid?: string; captcha_answer?: string }) {
@@ -694,11 +1386,11 @@ class ApiClient {
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.category) query.set('category', params.category);
     if (params?.sort) query.set('sort', params.sort);
-    return this.request<{ discussions: any[]; pagination: any }>(`/discussions?${query.toString()}`);
+    return this.request<{ discussions: Discussion[]; pagination: Pagination }>(`/discussions?${query.toString()}`);
   }
 
   async getDiscussion(id: number) {
-    return this.request<{ discussion: any; replies: any[] }>(`/discussions/${id}`);
+    return this.request<{ discussion: Discussion; replies: DiscussionReply[] }>(`/discussions/${id}`);
   }
 
   async createDiscussion(data: { problem_id?: number; title: string; content: string; category?: string; captcha_uuid?: string; captcha_answer?: string }) {
@@ -735,7 +1427,7 @@ class ApiClient {
   }
 
   async updateProfile(data: { avatar_url?: string; bio?: string; signature?: string }) {
-    return this.request<{ user: any }>('/users/profile', {
+    return this.request<{ user: User }>('/users/profile', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -808,7 +1500,7 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.type) query.set('type', params.type);
-    return this.request<{ uploads: any[]; pagination: any }>(`/uploads?${query.toString()}`);
+    return this.request<{ uploads: Upload[]; pagination: Pagination }>(`/uploads?${query.toString()}`);
   }
 
   async deleteUpload(id: number) {
@@ -819,7 +1511,7 @@ class ApiClient {
 
   // AI
   async aiChat(messages: { role: string; content: string }[], context?: string, model?: string) {
-    return this.request<{ content: string; model: string; provider: string; tool_calls?: { name: string; arguments: any; result_summary: string }[] }>('/ai/chat', {
+    return this.request<{ content: string; model: string; provider: string; tool_calls?: AIToolCall[] }>('/ai/chat', {
       method: 'POST',
       body: JSON.stringify({ messages, context, model }),
     });
@@ -830,7 +1522,7 @@ class ApiClient {
     messages: { role: string; content: string }[],
     context?: string,
     model?: string
-  ): AsyncGenerator<{ type: string; data: any }> {
+  ): AsyncGenerator<{ type: string; data: AIStreamData }> {
     const token = useAuthStore.getState().token;
     const url = `${API_BASE}/ai/chat`;
     const response = await fetch(url, {
@@ -860,14 +1552,14 @@ class ApiClient {
         buffer = parts.pop() || '';
         for (const part of parts) {
           let eventType = '';
-          let eventData: any = {};
+          let eventData: Record<string, unknown> = {};
           for (const line of part.split('\n')) {
             if (line.startsWith('event: ')) eventType = line.slice(7).trim();
             else if (line.startsWith('data: ')) {
-              try { eventData = JSON.parse(line.slice(6)); } catch {}
+              try { eventData = JSON.parse(line.slice(6)); } catch { /* keep empty */ }
             }
           }
-          if (eventType) yield { type: eventType, data: eventData };
+          if (eventType) yield { type: eventType, data: eventData as AIStreamData };
         }
       }
     } finally {
@@ -913,8 +1605,8 @@ class ApiClient {
     if (params.action) query.set('action', params.action);
     if (params.ip) query.set('ip', params.ip);
     return this.request<{
-      logs: any[];
-      pagination: { page: number; pageSize: number; total: number; totalPages: number };
+      logs: AuditLog[];
+      pagination: Pagination;
     }>(`/audit/logs?${query.toString()}`);
   }
 
@@ -925,8 +1617,8 @@ class ApiClient {
     if (params.page) query.set('page', String(params.page));
     if (params.pageSize) query.set('pageSize', String(params.pageSize));
     return this.request<{
-      bans: any[];
-      pagination: { page: number; pageSize: number; total: number; totalPages: number };
+      bans: BannedIP[];
+      pagination: Pagination;
     }>(`/audit/banned-ips?${query.toString()}`);
   }
 
@@ -950,8 +1642,8 @@ class ApiClient {
     if (params.page) query.set('page', String(params.page));
     if (params.pageSize) query.set('pageSize', String(params.pageSize));
     return this.request<{
-      bans: any[];
-      pagination: { page: number; pageSize: number; total: number; totalPages: number };
+      bans: BannedDevice[];
+      pagination: Pagination;
     }>(`/audit/banned-devices?${query.toString()}`);
   }
 
@@ -977,11 +1669,11 @@ class ApiClient {
     if (params?.category) query.set('category', params.category);
     if (params?.difficulty) query.set('difficulty', params.difficulty);
     if (params?.official) query.set('official', '1');
-    return this.request<{ plans: any[]; pagination: any }>(`/training?${query.toString()}`);
+    return this.request<{ plans: TrainingPlan[]; pagination: Pagination }>(`/training?${query.toString()}`);
   }
 
   async getTrainingPlan(id: number) {
-    return this.request<{ plan: any }>(`/training/${id}`);
+    return this.request<{ plan: TrainingPlan; chapters?: TrainingChapter[] }>(`/training/${id}`);
   }
 
   async getTrainingProgress(id: number) {
@@ -992,14 +1684,14 @@ class ApiClient {
     return this.request<{ message: string }>(`/training/${id}/join`, { method: 'POST' });
   }
 
-  async createTrainingPlan(data: any) {
+  async createTrainingPlan(data: Record<string, unknown>) {
     return this.request<{ id: number; message: string }>('/training', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateTrainingPlan(id: number, data: any) {
+  async updateTrainingPlan(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/training/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -1049,11 +1741,11 @@ class ApiClient {
   }
 
   async getPlagiarismReports(contestId: number) {
-    return this.request<{ reports: any[] }>(`/admin/contests/${contestId}/plagiarism-reports`);
+    return this.request<{ reports: PlagiarismReport[] }>(`/admin/contests/${contestId}/plagiarism-reports`);
   }
 
   async getPlagiarismReport(id: number) {
-    return this.request<{ report: any; submission_a: any; submission_b: any }>(`/admin/plagiarism/${id}`);
+    return this.request<{ report: PlagiarismReport; submission_a: Submission; submission_b: Submission }>(`/admin/plagiarism/${id}`);
   }
 
   // Notifications
@@ -1062,7 +1754,7 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.type) query.set('type', params.type);
-    return this.request<{ notifications: any[]; pagination: any }>(`/notifications?${query.toString()}`);
+    return this.request<{ notifications: AppNotification[]; pagination: Pagination }>(`/notifications?${query.toString()}`);
   }
 
   async getUnreadNotificationsCount() {
@@ -1098,26 +1790,26 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ users: any[]; pagination: any }>(`/users/${username}/followers?${query.toString()}`);
+    return this.request<{ users: User[]; pagination: Pagination }>(`/users/${username}/followers?${query.toString()}`);
   }
 
   async getFollowing(username: string, params?: { page?: number; pageSize?: number }) {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ users: any[]; pagination: any }>(`/users/${username}/following?${query.toString()}`);
+    return this.request<{ users: User[]; pagination: Pagination }>(`/users/${username}/following?${query.toString()}`);
   }
 
   // Messages
   async getConversations() {
-    return this.request<{ conversations: any[] }>('/messages/conversations');
+    return this.request<{ conversations: Conversation[] }>('/messages/conversations');
   }
 
   async getConversation(id: number, params?: { page?: number; pageSize?: number }) {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ messages: any[]; pagination: any }>(`/messages/conversations/${id}?${query.toString()}`);
+    return this.request<{ messages: Message[]; pagination: Pagination }>(`/messages/conversations/${id}?${query.toString()}`);
   }
 
   async sendMessage(targetUserId: number, content: string) {
@@ -1141,11 +1833,18 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
-    return this.request<{ teams: any[]; pagination: any }>(`/teams?${query.toString()}`);
+    return this.request<{ teams: Team[]; pagination: Pagination }>(`/teams?${query.toString()}`);
   }
 
   async getTeam(slug: string) {
-    return this.request<{ team: any; members: any[]; announcements?: any[]; user_membership?: any; join_request?: any; stats?: any }>(`/teams/${slug}`);
+    return this.request<{
+      team: Team;
+      members: TeamMember[];
+      announcements?: TeamAnnouncement[];
+      user_membership?: { role: string; joined_at: string };
+      join_request?: { id: number; status: string };
+      stats?: { member_count: number; problem_count: number; contest_count: number };
+    }>(`/teams/${slug}`);
   }
 
   async createTeam(data: { name: string; slug: string; description?: string; avatar_url?: string; is_public?: boolean }) {
@@ -1155,7 +1854,7 @@ class ApiClient {
     });
   }
 
-  async updateTeam(id: number, data: any) {
+  async updateTeam(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
@@ -1176,7 +1875,7 @@ class ApiClient {
   }
 
   async getTeamRankings(id: number) {
-    return this.request<{ rankings: any[] }>(`/teams/${id}/rankings`);
+    return this.request<{ rankings: RatingChange[] }>(`/teams/${id}/rankings`);
   }
 
   async transferTeam(id: number, userId: number) {
@@ -1188,11 +1887,11 @@ class ApiClient {
   }
 
   async getTeamMembers(teamId: number) {
-    return this.request<{ members: any[] }>(`/teams/${teamId}/members`);
+    return this.request<{ members: TeamMember[] }>(`/teams/${teamId}/members`);
   }
 
   async getTeamJoinRequests(teamId: number, status: string = 'pending') {
-    return this.request<{ requests: any[]; pagination: any }>(`/teams/${teamId}/join-requests?status=${status}`);
+    return this.request<{ requests: TeamJoinRequest[]; pagination: Pagination }>(`/teams/${teamId}/join-requests?status=${status}`);
   }
 
   async approveTeamJoinRequest(teamId: number, requestId: number) {
@@ -1208,14 +1907,14 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ announcements: any[]; pagination: any }>(`/teams/${teamId}/announcements?${query.toString()}`);
+    return this.request<{ announcements: TeamAnnouncement[]; pagination: Pagination }>(`/teams/${teamId}/announcements?${query.toString()}`);
   }
 
   async createTeamAnnouncement(teamId: number, data: { title: string; content: string; is_pinned?: boolean }) {
     return this.request<{ id: number; message: string }>(`/teams/${teamId}/announcements`, { method: 'POST', body: JSON.stringify(data) });
   }
 
-  async updateTeamAnnouncement(teamId: number, announcementId: number, data: any) {
+  async updateTeamAnnouncement(teamId: number, announcementId: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/teams/${teamId}/announcements/${announcementId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
@@ -1229,7 +1928,7 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.sort) query.set('sort', params.sort);
-    return this.request<{ discussions: any[]; pagination: any }>(`/teams/${teamId}/discussions?${query.toString()}`);
+    return this.request<{ discussions: TeamDiscussion[]; pagination: Pagination }>(`/teams/${teamId}/discussions?${query.toString()}`);
   }
 
   async createTeamDiscussion(teamId: number, data: { title: string; content: string }) {
@@ -1237,7 +1936,7 @@ class ApiClient {
   }
 
   async getTeamDiscussion(teamId: number, discussionId: number) {
-    return this.request<{ discussion: any; replies: any[] }>(`/teams/${teamId}/discussions/${discussionId}`);
+    return this.request<{ discussion: TeamDiscussion; replies: TeamDiscussionReply[] }>(`/teams/${teamId}/discussions/${discussionId}`);
   }
 
   async replyTeamDiscussion(teamId: number, discussionId: number, content: string) {
@@ -1253,7 +1952,7 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ problem_sets: any[]; pagination: any }>(`/teams/${teamId}/problem-sets?${query.toString()}`);
+    return this.request<{ problem_sets: TeamProblemSet[]; pagination: Pagination }>(`/teams/${teamId}/problem-sets?${query.toString()}`);
   }
 
   async createTeamProblemSet(teamId: number, data: { title: string; description?: string; is_public?: boolean }) {
@@ -1261,7 +1960,7 @@ class ApiClient {
   }
 
   async getTeamProblemSet(teamId: number, setId: number) {
-    return this.request<{ problem_set: any; problems: any[] }>(`/teams/${teamId}/problem-sets/${setId}`);
+    return this.request<{ problem_set: TeamProblemSet; problems: ProblemListItem[] }>(`/teams/${teamId}/problem-sets/${setId}`);
   }
 
   async deleteTeamProblemSet(teamId: number, setId: number) {
@@ -1282,15 +1981,15 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.status) query.set('status', params.status);
-    return this.request<{ contests: any[]; pagination: any }>(`/teams/${teamId}/contests?${query.toString()}`);
+    return this.request<{ contests: TeamContest[]; pagination: Pagination }>(`/teams/${teamId}/contests?${query.toString()}`);
   }
 
-  async createTeamContest(teamId: number, data: any) {
+  async createTeamContest(teamId: number, data: Record<string, unknown>) {
     return this.request<{ id: number; message: string }>(`/teams/${teamId}/contests`, { method: 'POST', body: JSON.stringify(data) });
   }
 
   async getTeamContest(teamId: number, contestId: number) {
-    return this.request<{ contest: any; problems: any[]; participant_count: number; is_registered: boolean }>(`/teams/${teamId}/contests/${contestId}`);
+    return this.request<{ contest: TeamContest; problems: ContestProblem[]; participant_count: number; is_registered: boolean }>(`/teams/${teamId}/contests/${contestId}`);
   }
 
   async registerTeamContest(teamId: number, contestId: number) {
@@ -1298,7 +1997,7 @@ class ApiClient {
   }
 
   async getTeamContestRankings(teamId: number, contestId: number) {
-    return this.request<{ rankings: any[] }>(`/teams/${teamId}/contests/${contestId}/rankings`);
+    return this.request<{ rankings: ContestRanking[] }>(`/teams/${teamId}/contests/${contestId}/rankings`);
   }
 
   async addTeamContestProblem(teamId: number, contestId: number, data: { problem_id: number; sort_order?: number; score?: number }) {
@@ -1316,11 +2015,11 @@ class ApiClient {
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.sort) query.set('sort', params.sort);
     if (params?.tag) query.set('tag', params.tag);
-    return this.request<{ blogs: any[]; pagination: any }>(`/blogs?${query.toString()}`);
+    return this.request<{ blogs: Blog[]; pagination: Pagination }>(`/blogs?${query.toString()}`);
   }
 
   async getBlog(id: number) {
-    return this.request<{ blog: any }>(`/blogs/${id}`);
+    return this.request<{ blog: Blog }>(`/blogs/${id}`);
   }
 
   async createBlog(data: { title: string; content: string; tags?: string; status?: string; captcha_uuid?: string; captcha_answer?: string }) {
@@ -1330,7 +2029,7 @@ class ApiClient {
     });
   }
 
-  async updateBlog(id: number, data: any) {
+  async updateBlog(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/blogs/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
@@ -1350,7 +2049,7 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ comments: any[]; pagination: any }>(`/blogs/${id}/comments?${query.toString()}`);
+    return this.request<{ comments: BlogComment[]; pagination: Pagination }>(`/blogs/${id}/comments?${query.toString()}`);
   }
 
   async postBlogComment(id: number, content: string) {
@@ -1366,7 +2065,7 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.status) query.set('status', params.status);
-    return this.request<{ solutions: any[]; pagination: any }>(`/solutions/admin/review?${query.toString()}`);
+    return this.request<{ solutions: Solution[]; pagination: Pagination }>(`/solutions/admin/review?${query.toString()}`);
   }
 
   async approveSolution(id: number) {
@@ -1393,7 +2092,7 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.status) query.set('status', params.status);
-    return this.request<{ reports: any[]; pagination: any }>(`/problems/admin/reports?${query.toString()}`);
+    return this.request<{ reports: ProblemReport[]; pagination: Pagination }>(`/problems/admin/reports?${query.toString()}`);
   }
 
   async updateProblemReport(id: number, status: string, adminReply: string) {
@@ -1407,7 +2106,7 @@ class ApiClient {
 
   // Personalized problem recommendations for the current user
   async getRecommendedProblems(limit = 10) {
-    return this.request<{ recommendations: any[]; user_rating: number; top_tags: string[] }>(
+    return this.request<{ recommendations: RecommendedProblem[]; user_rating: number; top_tags: string[] }>(
       `/problems/recommend?limit=${limit}`
     );
   }
@@ -1422,7 +2121,7 @@ class ApiClient {
 
   // Finalize ratings for a rated contest (admin)
   async finalizeContestRatings(contestId: number) {
-    return this.request<{ message: string; changes_count: number; changes: any[] }>(
+    return this.request<{ message: string; changes_count: number; changes: RatingChange[] }>(
       `/contests/${contestId}/finalize`,
       { method: 'POST' }
     );
@@ -1430,7 +2129,7 @@ class ApiClient {
 
   // Get rating changes for a finalized contest
   async getContestRatingChanges(contestId: number) {
-    return this.request<{ contest: any; changes: any[] }>(`/contests/${contestId}/rating-changes`);
+    return this.request<{ contest: Contest; changes: RatingChange[] }>(`/contests/${contestId}/rating-changes`);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -1442,11 +2141,11 @@ class ApiClient {
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
     if (params?.status) query.set('status', params.status);
-    return this.request<{ blogs: any[]; pagination: any }>(`/admin/blogs?${query.toString()}`);
+    return this.request<{ blogs: Blog[]; pagination: Pagination }>(`/admin/blogs?${query.toString()}`);
   }
 
   async getAdminBlog(id: number) {
-    return this.request<{ blog: any }>(`/admin/blogs/${id}`);
+    return this.request<{ blog: Blog }>(`/admin/blogs/${id}`);
   }
 
   async updateBlogStatus(id: number, status: string) {
@@ -1468,7 +2167,7 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
-    return this.request<{ teams: any[]; pagination: any }>(`/admin/teams?${query.toString()}`);
+    return this.request<{ teams: Team[]; pagination: Pagination }>(`/admin/teams?${query.toString()}`);
   }
 
   async deleteTeamAdmin(id: number) {
@@ -1490,14 +2189,14 @@ class ApiClient {
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
-    return this.request<{ conversations: any[]; pagination: any }>(`/admin/messages/conversations?${query.toString()}`);
+    return this.request<{ conversations: Conversation[]; pagination: Pagination }>(`/admin/messages/conversations?${query.toString()}`);
   }
 
   async getAdminConversationMessages(id: number, params?: { page?: number; pageSize?: number }) {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ messages: any[]; pagination: any }>(`/admin/messages/conversations/${id}?${query.toString()}`);
+    return this.request<{ messages: Message[]; pagination: Pagination }>(`/admin/messages/conversations/${id}?${query.toString()}`);
   }
 
   async deleteMessageAdmin(id: number) {
@@ -1517,11 +2216,11 @@ class ApiClient {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
-    return this.request<{ notes: any[]; pagination: any }>(`/notes?${query.toString()}`);
+    return this.request<{ notes: ProblemNote[]; pagination: Pagination }>(`/notes?${query.toString()}`);
   }
 
   async getNote(problemId: number) {
-    return this.request<{ note: any }>(`/notes/${problemId}`);
+    return this.request<{ note: ProblemNote }>(`/notes/${problemId}`);
   }
 
   async saveNote(problemId: number, content: string, is_public = false) {
@@ -1534,25 +2233,25 @@ class ApiClient {
 
   // ── Achievements ──
   async getAchievements() {
-    return this.request<{ achievements: any[] }>(`/achievements`);
+    return this.request<{ achievements: Achievement[] }>(`/achievements`);
   }
 
   async checkAchievements() {
-    return this.request<{ new_achievements: any[]; solved_count: number }>(`/achievements/check`);
+    return this.request<{ new_achievements: Achievement[]; solved_count: number }>(`/achievements/check`);
   }
 
   // ── Search ──
   async search(q: string, type: string = 'all') {
-    return this.request<{ results: any[]; total: number; query: string }>(`/search?q=${encodeURIComponent(q)}&type=${type}`);
+    return this.request<{ results: SearchResult[]; total: number; query: string }>(`/search?q=${encodeURIComponent(q)}&type=${type}`);
   }
 
   // ── Code Templates ──
   async getTemplates() {
-    return this.request<{ templates: any[] }>(`/templates`);
+    return this.request<{ templates: CodeTemplate[] }>(`/templates`);
   }
 
   async getTemplate(language: string) {
-    return this.request<{ template: any }>(`/templates/${language}`);
+    return this.request<{ template: CodeTemplate }>(`/templates/${language}`);
   }
 
   async saveTemplate(language: string, content: string, name?: string) {
@@ -1574,7 +2273,7 @@ class ApiClient {
 
   // ── Search ──
   async searchSuggestions(q: string) {
-    return this.request<{ suggestions: any[] }>(`/search/suggestions?q=${encodeURIComponent(q)}`);
+    return this.request<{ suggestions: SearchSuggestion[] }>(`/search/suggestions?q=${encodeURIComponent(q)}`);
   }
 
   // ── Auth: Password Reset ──

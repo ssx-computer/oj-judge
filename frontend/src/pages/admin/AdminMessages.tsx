@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -29,11 +29,7 @@ export default function AdminMessages() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => {
-    fetchConversations();
-  }, [page, debouncedSearch]);
-
-  const fetchConversations = async () => {
+  const fetchConversations = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getAdminConversations({
@@ -48,7 +44,12 @@ export default function AdminMessages() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedSearch, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchConversations();
+  }, [fetchConversations]);
 
   const fetchMessages = async (convId: number, targetPage = 1) => {
     setLoadingMessages(true);

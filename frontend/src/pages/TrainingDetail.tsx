@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -28,12 +28,7 @@ export default function TrainingDetail() {
   const addToast = useToastStore((s) => s.addToast);
   useDocumentTitle(plan?.title || t('training.title'));
 
-  useEffect(() => {
-    fetchPlan();
-    if (user) fetchProgress();
-  }, [planId, user]);
-
-  const fetchPlan = async () => {
+  const fetchPlan = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
@@ -49,16 +44,23 @@ export default function TrainingDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [planId]);
 
-  const fetchProgress = async () => {
+  const fetchProgress = useCallback(async () => {
     try {
       const data = await api.getTrainingProgress(planId);
       setProgress(data);
-    } catch (e) {
+    } catch {
       // 未加入计划时可能 404，忽略
     }
-  };
+  }, [planId]);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    fetchPlan();
+    if (user) fetchProgress();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [fetchPlan, fetchProgress, user]);
 
   const toggleChapter = (chapterId: number) => {
     setExpandedChapters((prev) => ({ ...prev, [chapterId]: !prev[chapterId] }));

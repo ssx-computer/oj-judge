@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { MessageSquare, Send, ArrowLeft, Plus, Search, X } from 'lucide-react';
@@ -23,8 +23,12 @@ export default function Messages() {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // New conversation target (from query string ?target=userId)
-  const [targetUserId, setTargetUserId] = useState<number | null>(null);
+  // New conversation target (from query string ?target=UserId)
+  const [targetUserId, setTargetUserId] = useState<number | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get('target');
+    return target ? parseInt(target) : null;
+  });
 
   // New conversation dialog state
   const [showNewDialog, setShowNewDialog] = useState(false);
@@ -37,44 +41,7 @@ export default function Messages() {
   const [messagesPagination, setMessagesPagination] = useState<any>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const target = params.get('target');
-    if (target) {
-      setTargetUserId(parseInt(target));
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchConversations();
-  }, []);
-
-  // Auto-refresh conversations list every 15s to pick up new messages / unread counts
-  useEffect(() => {
-    const timer = setInterval(fetchConversationsSilent, 15000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // When in an active conversation, poll for new messages every 10s
-  useEffect(() => {
-    if (!selectedId) return;
-    const timer = setInterval(() => fetchMessagesSilent(selectedId), 10000);
-    return () => clearInterval(timer);
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (selectedId) {
-      setMessagesPage(1);
-      fetchMessages(selectedId);
-      api.markConversationRead(selectedId).catch(() => { /* ignore */ });
-    }
-  }, [selectedId]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const fetchConversations = async () => {
+  const fetchConversations = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getConversations();
@@ -84,16 +51,16 @@ export default function Messages() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [addToast]);
 
-  const fetchConversationsSilent = async () => {
+  const fetchConversationsSilent = useCallback(async () => {
     try {
       const data = await api.getConversations();
       setConversations(data.conversations);
     } catch { /* ignore */ }
-  };
+  }, []);
 
-  const fetchMessages = async (convId: number) => {
+  const fetchMessages = useCallback(async (convId: number) => {
     try {
       const data = await api.getConversation(convId, { page: 1, pageSize: 50 });
       setMessages(data.messages);
@@ -102,10 +69,10 @@ export default function Messages() {
     } catch (e: any) {
       addToast('error', e.message || t('common.loadError'));
     }
-  };
+  }, [addToast]);
 
   // Silent refresh — only append new messages without resetting scroll
-  const fetchMessagesSilent = async (convId: number) => {
+  const fetchMessagesSilent = useCallback(async (convId: number) => {
     try {
       const data = await api.getConversation(convId, { page: 1, pageSize: 50 });
       // Only update if message count changed (avoid unnecessary re-renders)
@@ -116,7 +83,40 @@ export default function Messages() {
         api.markConversationRead(convId).catch(() => {});
       }
     } catch { /* ignore */ }
-  };
+  }, [messages]);
+
+  useEffect(() => {
+    const init = async () => {
+      await fetchConversations();
+    };
+    init();
+  }, [fetchConversations]);
+
+  // Auto-refresh conversations list every 15s to pick up new messages / unread counts
+  useEffect(() => {
+    const timer = setInterval(fetchConversationsSilent, 15000);
+    return () => clearInterval(timer);
+  }, [fetchConversationsSilent]);
+
+  // When in an active conversation, poll for new messages every 10s
+  useEffect(() => {
+    if (!selectedId) return;
+    const timer = setInterval(() => fetchMessagesSilent(selectedId), 10000);
+    return () => clearInterval(timer);
+  }, [selectedId, fetchMessagesSilent]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const init = async () => {
+      await fetchMessages(selectedId);
+    };
+    init();
+    api.markConversationRead(selectedId).catch(() => { /* ignore */ });
+  }, [selectedId, fetchMessages]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleLoadMore = async () => {
     if (!selectedId || !messagesPagination || messagesPage >= messagesPagination.totalPages) return;

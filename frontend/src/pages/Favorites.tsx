@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -17,11 +17,7 @@ export default function Favorites() {
   const [loadError, setLoadError] = useState(false);
   useDocumentTitle(t('favorites.title'));
 
-  useEffect(() => {
-    if (user) fetchFavorites();
-  }, [user, page]);
-
-  const fetchFavorites = async () => {
+  const fetchFavorites = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
@@ -34,7 +30,14 @@ export default function Favorites() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page]);
+
+  useEffect(() => {
+    if (user) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchFavorites();
+    }
+  }, [user, fetchFavorites]);
 
   if (!user) {
     return (

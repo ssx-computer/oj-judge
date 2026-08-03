@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -42,12 +42,8 @@ export default function TicketDetail() {
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
-  useEffect(() => {
+  const fetchTicket = useCallback(async () => {
     if (!id) return;
-    fetchTicket();
-  }, [id]);
-
-  const fetchTicket = async () => {
     setLoading(true);
     try {
       const data = await api.getTicket(Number(id));
@@ -60,7 +56,12 @@ export default function TicketDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchTicket();
+  }, [fetchTicket]);
 
   const handleReply = async () => {
     if (!id || !replyContent.trim() || submitting) return;

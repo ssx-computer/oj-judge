@@ -69,22 +69,23 @@ export default function SubmissionDetail() {
     };
   }, []);
 
+  const fetchSubmissionRef = useRef<() => Promise<void>>(async () => {});
+
   const fetchSubmission = useCallback(async () => {
     if (!id) return;
-    setLoading(true);
-    setLoadError(null);
     try {
       const data = await api.getSubmission(parseInt(id));
       if (!isMountedRef.current) return;
       setSubmission(data.submission);
+      setLoadError(null);
 
       if (isPolling(data.submission.status)) {
-        pollingRef.current = setTimeout(fetchSubmission, 3000);
+        pollingRef.current = setTimeout(() => fetchSubmissionRef.current(), 3000);
       } else {
         // Judging finished — fetch detailed testcases and logs
         fetchTestcasesAndLogs(data.submission.id);
       }
-    } catch (e) {
+    } catch {
       if (!isMountedRef.current) return;
       setLoadError(t('submissionDetail.loadError'));
     } finally {
@@ -93,6 +94,11 @@ export default function SubmissionDetail() {
   }, [id, fetchTestcasesAndLogs]);
 
   useEffect(() => {
+    fetchSubmissionRef.current = fetchSubmission;
+  }, [fetchSubmission]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchSubmission();
   }, [fetchSubmission]);
 
@@ -263,7 +269,7 @@ export default function SubmissionDetail() {
       {/* Fallback: old-style details JSON when testcases table is empty */}
       {!isStillPolling && testcases.length === 0 && (() => {
         let details: any[] = [];
-        try { details = JSON.parse(submission.details || '[]'); } catch {}
+        try { details = JSON.parse(submission.details || '[]'); } catch { /* ignore malformed JSON */ }
         return details.length > 0 ? (
           <div className="testcase-results">
             <h2>{t('submissionDetail.testResults')}</h2>

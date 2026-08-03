@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -16,12 +16,7 @@ export default function Blogs() {
   const { user } = useAuthStore();
   useDocumentTitle(t('blogs.title'));
 
-  useEffect(() => {
-    fetchBlogs();
-  }, [sort]);
-
-  const fetchBlogs = async () => {
-    setLoading(true);
+  const fetchBlogs = useCallback(async () => {
     try {
       const data = await api.getBlogs({ sort, pageSize: 30 });
       setBlogs(data.blogs);
@@ -30,7 +25,12 @@ export default function Blogs() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [sort]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchBlogs();
+  }, [fetchBlogs]);
 
   return (
     <div className="blogs-page">

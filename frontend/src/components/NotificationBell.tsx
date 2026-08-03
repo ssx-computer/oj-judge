@@ -1,30 +1,46 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Bell, Check, CheckCheck } from 'lucide-react';
-import { api } from '../api/client';
+import { api, type AppNotification } from '../api/client';
 import { t } from '../i18n';
 import { useAuthStore } from '../store/auth';
 import './NotificationBell.css';
 
 export default function NotificationBell() {
   const [unread, setUnread] = useState(0);
-  const [recent, setRecent] = useState<any[]>([]);
+  const [recent, setRecent] = useState<AppNotification[]>([]);
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { user } = useAuthStore();
 
+  const fetchUnread = useCallback(async () => {
+    try {
+      const data = await api.getUnreadNotificationsCount();
+      setUnread(data.count);
+    } catch { /* ignore */ }
+  }, []);
+
+  const fetchRecent = useCallback(async () => {
+    try {
+      const data = await api.getNotifications({ pageSize: 5 });
+      setRecent(data.notifications);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     if (!user) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchUnread();
     const timer = setInterval(fetchUnread, 30000);
     return () => clearInterval(timer);
-  }, [user]);
+  }, [user, fetchUnread]);
 
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchRecent();
-  }, [open]);
+  }, [open, fetchRecent]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -35,20 +51,6 @@ export default function NotificationBell() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  const fetchUnread = async () => {
-    try {
-      const data = await api.getUnreadNotificationsCount();
-      setUnread(data.count);
-    } catch { /* ignore */ }
-  };
-
-  const fetchRecent = async () => {
-    try {
-      const data = await api.getNotifications({ pageSize: 5 });
-      setRecent(data.notifications);
-    } catch { /* ignore */ }
-  };
 
   const handleBellClick = () => {
     setOpen((prev) => !prev);
@@ -63,7 +65,7 @@ export default function NotificationBell() {
     } catch { /* ignore */ }
   };
 
-  const handleItemClick = async (n: any, e: React.MouseEvent) => {
+  const handleItemClick = async (n: AppNotification, e: React.MouseEvent) => {
     e.preventDefault();
     if (!n.is_read) {
       try {

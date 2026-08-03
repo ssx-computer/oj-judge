@@ -33,6 +33,8 @@ const en: Translations = {
   },
   common: {
     search: 'Search',
+    searchPlaceholder: 'Search problems, users, blogs...',
+    searchAll: 'Search all',
     loading: 'Loading...',
     save: 'Save',
     cancel: 'Cancel',

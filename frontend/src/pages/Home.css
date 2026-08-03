@@ -593,5 +593,6 @@
   [data-theme-style="default"] .home-stats-grid,
   [data-theme-style="hydro"] .home-stats-grid {
     width: 100%;
+    min-width: 0;
   }
 }

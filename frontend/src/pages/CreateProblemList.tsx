@@ -36,9 +36,10 @@ export default function CreateProblemList() {
       }, 300);
       return () => clearTimeout(timer);
     } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearchResults([]);
     }
-  }, [searchQuery]);
+  }, [searchQuery, selectedProblems]);
 
   if (!user) {
     return (

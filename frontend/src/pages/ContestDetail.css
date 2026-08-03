@@ -808,7 +808,7 @@
 }
 
 .rc-delta.negative {
-  color: var(--danger);
+  color: var(--error);
 }
 
 .review-section h3 {

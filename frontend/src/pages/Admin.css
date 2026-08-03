@@ -1334,7 +1334,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-card);
-  color: var(--text);
+  color: var(--text-primary);
   font-size: 13px;
   outline: none;
   transition: border-color 0.2s;
@@ -1464,8 +1464,8 @@
 }
 
 .btn-icon-sm.danger:hover {
-  color: var(--danger);
-  border-color: var(--danger);
+  color: var(--error);
+  border-color: var(--error);
 }
 
 .btn-text-sm {
@@ -1491,13 +1491,13 @@
 }
 
 .btn-text-sm.danger {
-  color: var(--danger);
+  color: var(--error);
   border-color: transparent;
 }
 
 .btn-text-sm.danger:hover {
-  background: var(--danger-bg);
-  border-color: var(--danger);
+  background: var(--error-bg);
+  border-color: var(--error);
 }
 
 .btn-text-sm.success {
@@ -1536,8 +1536,8 @@
   padding: 2px 6px;
   font-size: 11px;
   border-radius: 4px;
-  background: var(--danger-bg);
-  color: var(--danger);
+  background: var(--error-bg);
+  color: var(--error);
   font-weight: 600;
   margin-left: 6px;
 }
@@ -1793,9 +1793,9 @@
 }
 
 .btn-danger {
-  background: var(--danger, #fe2c55);
+  background: var(--error, #fe2c55);
   color: white;
-  border: 1px solid var(--danger, #fe2c55);
+  border: 1px solid var(--error, #fe2c55);
 }
 
 .btn-danger:hover {

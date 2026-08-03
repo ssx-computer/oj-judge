@@ -490,6 +490,7 @@
   .problem-table-header,
   .problem-row {
     grid-template-columns: 30px 40px 1fr 80px;
+    min-width: 0;
   }
 
   .col-tags,

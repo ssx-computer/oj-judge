@@ -31,7 +31,6 @@ export default function SubmissionCompare() {
 
   useEffect(() => {
     if (!id1 || !id2) return;
-    setLoading(true);
     api.compareSubmissions(parseInt(id1), parseInt(id2))
       .then(setData)
       .catch(console.error)

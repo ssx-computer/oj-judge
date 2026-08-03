@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import { useToastStore } from '../store/toast';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -24,15 +24,18 @@ export default function Templates() {
   const [editContent, setEditContent] = useState('');
   const [editName, setEditName] = useState('');
 
-  useEffect(() => { fetchTemplates(); }, []);
-
-  const fetchTemplates = async () => {
+  const fetchTemplates = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getTemplates();
       setTemplates(data.templates || []);
     } catch { setTemplates([]); } finally { setLoading(false); }
-  };
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchTemplates();
+  }, [fetchTemplates]);
 
   const handleSave = async () => {
     if (!editLang || !editContent) return;

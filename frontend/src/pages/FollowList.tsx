@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -16,11 +16,7 @@ export default function FollowList() {
   const [page, setPage] = useState(1);
   useDocumentTitle(isFollowers ? t('follow.followers') : t('follow.followingList'));
 
-  useEffect(() => {
-    fetchUsers();
-  }, [username, type, page]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     if (!username) return;
     setLoading(true);
     try {
@@ -34,7 +30,12 @@ export default function FollowList() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [username, isFollowers, page]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchUsers();
+  }, [fetchUsers]);
 
   return (
     <div className="follow-list-page">

@@ -117,7 +117,6 @@
 /* ═══════════════════════════════════════════════════
    Luogu Theme  — 洛谷风格复刻
    ═══════════════════════════════════════════════════ */
-:root .layout,
 [data-theme-style="luogu"] .layout {
   min-height: 100vh;
   display: flex;
@@ -126,7 +125,6 @@
   position: relative;
 }
 
-:root .layout-body,
 [data-theme-style="luogu"] .layout-body {
   flex: 1;
   display: flex;
@@ -134,7 +132,6 @@
   min-height: 0;
 }
 
-:root .main-content,
 [data-theme-style="luogu"] .main-content {
   flex: 1;
   min-width: 0;
@@ -142,7 +139,6 @@
   animation: fadeInUp 0.25s ease-out;
 }
 
-:root .site-footer,
 [data-theme-style="luogu"] .site-footer {
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
@@ -150,7 +146,6 @@
   margin-top: auto;
 }
 
-:root .footer-inner,
 [data-theme-style="luogu"] .footer-inner {
   max-width: 1200px;
   margin: 0 auto;
@@ -161,7 +156,6 @@
   flex-wrap: wrap;
 }
 
-:root .footer-text,
 [data-theme-style="luogu"] .footer-text {
   font-size: 12px;
   color: var(--text-secondary);
@@ -170,25 +164,21 @@
   gap: 8px;
 }
 
-:root .footer-text-multi,
 [data-theme-style="luogu"] .footer-text-multi {
   flex-wrap: wrap;
   gap: 12px;
 }
 
-:root .footer-custom-text,
 [data-theme-style="luogu"] .footer-custom-text {
   white-space: pre-wrap;
 }
 
-:root .footer-links,
 [data-theme-style="luogu"] .footer-links {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
 }
 
-:root .footer-links a,
 [data-theme-style="luogu"] .footer-links a {
   font-size: 12px;
   color: var(--text-secondary);
@@ -197,14 +187,12 @@
   padding: 2px 4px;
 }
 
-:root .footer-links a:hover,
 [data-theme-style="luogu"] .footer-links a:hover {
   color: var(--accent);
   text-decoration: none;
 }
 
 @media (max-width: 768px) {
-  :root .main-content,
   [data-theme-style="luogu"] .main-content {
     padding: 12px;
   }

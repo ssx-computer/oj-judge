@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -64,13 +64,8 @@ export default function Solutions() {
   const captchaRef = useRef<CaptchaHandle>(null);
   useDocumentTitle(t('solutions.title'));
 
-  useEffect(() => {
-    if (problemId) fetchSolutions();
-  }, [problemId, page, sort]);
-
-  const fetchSolutions = async () => {
-    setLoading(true);
-    setLoadError(false);
+  const fetchSolutions = useCallback(async () => {
+    if (!problemId) return;
     try {
       const data = await api.getSolutions({
         problem_id: problemId,
@@ -80,6 +75,7 @@ export default function Solutions() {
       });
       setSolutions(data.solutions);
       setPagination(data.pagination);
+      setLoadError(false);
     } catch (e) {
       addToast('error', t('common.loadError'));
       console.error('Failed to fetch solutions:', e);
@@ -87,7 +83,12 @@ export default function Solutions() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [problemId, page, sort, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchSolutions();
+  }, [fetchSolutions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -286,7 +287,7 @@ export default function Solutions() {
         <div className="error-banner">
           <AlertCircle size={16} />
           <span>{t('common.loadError')}</span>
-          <button className="btn btn-secondary btn-sm" onClick={fetchSolutions}>{t('common.retry')}</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); setLoadError(false); fetchSolutions(); }}>{t('common.retry')}</button>
         </div>
       ) : solutions.length === 0 ? (
         <div className="solutions-empty-state">

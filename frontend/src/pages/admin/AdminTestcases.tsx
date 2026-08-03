@@ -26,6 +26,19 @@ export default function AdminTestcases() {
   const [selectedProblemJudgeType, setSelectedProblemJudgeType] = useState<string>('default');
   const testcaseSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const handleSelectTestcaseProblem = useCallback(async (problem: any) => {
+    setSelectedTestcaseProblem(problem);
+    setSelectedProblemJudgeType(problem.judge_type || 'default');
+    setTestcaseSearch('');
+    try {
+      const data = await api.getProblemTestcases(problem.id);
+      setExistingTestcases(data.testcases);
+    } catch (e) {
+      console.error('Failed to fetch testcases:', e);
+      setExistingTestcases([]);
+    }
+  }, []);
+
   // Handle navigation from Create Problem page
   useEffect(() => {
     const problemId = searchParams.get('problemId');
@@ -37,22 +50,10 @@ export default function AdminTestcases() {
         difficulty: searchParams.get('problemDifficulty') || 'Easy',
         judge_type: searchParams.get('problemJudgeType') || 'default',
       };
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       handleSelectTestcaseProblem(problem);
     }
-  }, []);
-
-  const handleSelectTestcaseProblem = async (problem: any) => {
-    setSelectedTestcaseProblem(problem);
-    setSelectedProblemJudgeType(problem.judge_type || 'default');
-    setTestcaseSearch('');
-    try {
-      const data = await api.getProblemTestcases(problem.id);
-      setExistingTestcases(data.testcases);
-    } catch (e) {
-      console.error('Failed to fetch testcases:', e);
-      setExistingTestcases([]);
-    }
-  };
+  }, [searchParams, handleSelectTestcaseProblem]);
 
   const handleAddTestcaseRow = () => {
     setTestcases([...testcases, { input: '', expected_output: '', is_sample: false, score: 10 }]);

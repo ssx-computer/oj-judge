@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Trophy, Medal, Award, Crown, Target, TrendingUp, AlertCircle, Star, Search } from 'lucide-react';
@@ -26,11 +26,7 @@ export default function Rankings() {
     return (u.username?.toLowerCase().includes(q));
   });
 
-  useEffect(() => {
-    fetchRankings();
-  }, [timeRange, mode]);
-
-  const fetchRankings = async () => {
+  const fetchRankings = useCallback(async () => {
     try {
       setLoadError(false);
       if (mode === 'rating') {
@@ -46,7 +42,12 @@ export default function Rankings() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [mode, timeRange]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchRankings();
+  }, [fetchRankings]);
 
   const getRankIcon = (rank: number) => {
     if (rank === 1) return <Crown className="rank-icon gold" size={28} />;

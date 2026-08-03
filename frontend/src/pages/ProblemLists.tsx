@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -16,25 +16,25 @@ export default function ProblemLists() {
   const [searchInput, setSearchInput] = useState('');
   useDocumentTitle(t('lists.title'));
 
-  useEffect(() => {
-    fetchLists();
-  }, [search]);
-
-  const fetchLists = async () => {
-    setLoading(true);
-    setLoadError(false);
+  const fetchLists = useCallback(async () => {
     try {
       const data = await api.getProblemLists({
         search: search || undefined,
       });
       setLists(data.lists);
+      setLoadError(false);
     } catch (e) {
       console.error('Failed to fetch problem lists:', e);
       setLoadError(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [search]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchLists();
+  }, [fetchLists]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,7 +69,7 @@ export default function ProblemLists() {
         <div className="error-banner">
           <AlertCircle size={16} />
           <span>{t('common.loadError')}</span>
-          <button className="btn btn-secondary btn-sm" onClick={fetchLists}>{t('common.retry')}</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); setLoadError(false); fetchLists(); }}>{t('common.retry')}</button>
         </div>
       ) : lists.length === 0 ? (
         <EmptyState

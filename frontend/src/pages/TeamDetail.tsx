@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -26,11 +26,7 @@ export default function TeamDetail() {
   const [tab, setTab] = useState<Tab>('overview');
   useDocumentTitle(team?.name || t('teams.title'));
 
-  useEffect(() => {
-    fetchTeam();
-  }, [slug]);
-
-  const fetchTeam = async () => {
+  const fetchTeam = useCallback(async () => {
     if (!slug) return;
     setLoading(true);
     try {
@@ -43,7 +39,12 @@ export default function TeamDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [slug, addToast]);
+
+  useEffect(() => {
+    const load = async () => { fetchTeam(); };
+    load();
+  }, [fetchTeam]);
 
   const handleJoin = async () => {
     if (!team) return;
@@ -230,16 +231,19 @@ function AnnouncementsTab({ teamId, canManage }: { teamId: number; canManage: bo
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: '', content: '', is_pinned: false });
 
-  useEffect(() => { fetchAnnouncements(); }, [teamId]);
-
-  const fetchAnnouncements = async () => {
+  const fetchAnnouncements = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getTeamAnnouncements(teamId, { pageSize: 20 });
       setList(data.announcements);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, [teamId]);
+
+  useEffect(() => {
+    const load = async () => { fetchAnnouncements(); };
+    load();
+  }, [fetchAnnouncements]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -315,16 +319,19 @@ function DiscussionsTab({ teamId, isMember }: { teamId: number; isMember: boolea
   const [selectedDisc, setSelectedDisc] = useState<any>(null);
   const [replyContent, setReplyContent] = useState('');
 
-  useEffect(() => { fetchDiscussions(); }, [teamId]);
-
-  const fetchDiscussions = async () => {
+  const fetchDiscussions = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getTeamDiscussions(teamId, { pageSize: 20 });
       setList(data.discussions);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, [teamId]);
+
+  useEffect(() => {
+    const load = async () => { fetchDiscussions(); };
+    load();
+  }, [fetchDiscussions]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -435,16 +442,19 @@ function ProblemSetsTab({ teamId, isMember }: { teamId: number; isMember: boolea
   const [selectedSet, setSelectedSet] = useState<any>(null);
   const [addProblemId, setAddProblemId] = useState('');
 
-  useEffect(() => { fetchSets(); }, [teamId]);
-
-  const fetchSets = async () => {
+  const fetchSets = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getTeamProblemSets(teamId, { pageSize: 20 });
       setList(data.problem_sets);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, [teamId]);
+
+  useEffect(() => {
+    const load = async () => { fetchSets(); };
+    load();
+  }, [fetchSets]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -553,16 +563,19 @@ function ContestsTab({ teamId, canManage }: { teamId: number; canManage: boolean
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', start_time: '', end_time: '', scoring_type: 'acm', is_public: false });
 
-  useEffect(() => { fetchContests(); }, [teamId]);
-
-  const fetchContests = async () => {
+  const fetchContests = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getTeamContests(teamId, { pageSize: 20 });
       setList(data.contests);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, [teamId]);
+
+  useEffect(() => {
+    const load = async () => { fetchContests(); };
+    load();
+  }, [fetchContests]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -641,7 +654,7 @@ function MembersTab({ teamId, members, isOwner, isSiteAdmin, onRemove, onRefresh
     if (isOwner || isSiteAdmin) {
       api.getTeamJoinRequests(teamId).then((d) => setJoinRequests(d.requests)).catch(() => {});
     }
-  }, [teamId]);
+  }, [teamId, isOwner, isSiteAdmin]);
 
   const handleTransfer = async () => {
     if (!transferUserId) return;
@@ -774,8 +787,15 @@ function RankingsTab({ teamId }: { teamId: number }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
-    api.getTeamRankings(teamId).then((r) => setRankings(r.rankings)).catch(() => {}).finally(() => setLoading(false));
+    const load = async () => {
+      setLoading(true);
+      try {
+        const r = await api.getTeamRankings(teamId);
+        setRankings(r.rankings);
+      } catch { /* ignore */ }
+      setLoading(false);
+    };
+    load();
   }, [teamId]);
 
   if (loading) return <LoadingSpinner />;

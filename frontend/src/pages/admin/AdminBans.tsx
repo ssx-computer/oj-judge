@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { useToastStore } from '../../store/toast';
@@ -46,9 +46,7 @@ function BannedIPsList() {
   const [newIP, setNewIP] = useState('');
   const [newReason, setNewReason] = useState('');
 
-  useEffect(() => { fetchBans(); }, [page]);
-
-  const fetchBans = async () => {
+  const fetchBans = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getBannedIPs({ page, pageSize: 20 });
@@ -56,7 +54,12 @@ function BannedIPsList() {
       setTotalPages(data.pagination.totalPages);
       setTotal(data.pagination.total);
     } catch { setBans([]); } finally { setLoading(false); }
-  };
+  }, [page]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchBans();
+  }, [fetchBans]);
 
   const handleBan = async () => {
     if (!newIP.trim()) return;
@@ -170,9 +173,7 @@ function BannedDevicesList() {
   const [newFP, setNewFP] = useState('');
   const [newReason, setNewReason] = useState('');
 
-  useEffect(() => { fetchBans(); }, [page]);
-
-  const fetchBans = async () => {
+  const fetchBans = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getBannedDevices({ page, pageSize: 20 });
@@ -180,7 +181,12 @@ function BannedDevicesList() {
       setTotalPages(data.pagination.totalPages);
       setTotal(data.pagination.total);
     } catch { setBans([]); } finally { setLoading(false); }
-  };
+  }, [page]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchBans();
+  }, [fetchBans]);
 
   const handleBan = async () => {
     if (!newFP.trim()) return;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import DOMPurify from 'dompurify';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
@@ -14,13 +14,7 @@ export default function AdminAnnouncement() {
   const [announcementSaving, setAnnouncementSaving] = useState(false);
   const [announcementLoaded, setAnnouncementLoaded] = useState(false);
 
-  useEffect(() => {
-    if (!announcementLoaded) {
-      fetchAnnouncement();
-    }
-  }, []);
-
-  const fetchAnnouncement = async () => {
+  const fetchAnnouncement = useCallback(async () => {
     try {
       const data = await api.getSettings();
       setAnnouncementContent(data.announcement || '');
@@ -28,7 +22,14 @@ export default function AdminAnnouncement() {
     } catch (e) {
       console.error('Failed to fetch announcement:', e);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!announcementLoaded) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchAnnouncement();
+    }
+  }, [fetchAnnouncement, announcementLoaded]);
 
   const handleSaveAnnouncement = async () => {
     setAnnouncementSaving(true);

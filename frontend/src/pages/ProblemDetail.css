@@ -480,18 +480,6 @@
 }
 
 @media (max-width: 768px) {
-  .problem-detail-page {
-    grid-template-columns: 1fr;
-  }
-
-  .problem-info {
-    max-height: none;
-  }
-
-  .code-panel {
-    position: static;
-  }
-
   .problem-meta {
     gap: 8px;
   }

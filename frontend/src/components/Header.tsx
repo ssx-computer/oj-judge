@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { NavLink, useNavigate, Link } from 'react-router-dom';
+import { NavLink, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { useThemeStore } from '../store/theme';
 import { useSettingsStore } from '../store/settings';
 import { t } from '../i18n';
-import { api } from '../api/client';
+import { api, type SearchSuggestion } from '../api/client';
 import { useSiteConfig } from '../hooks/useSiteConfig';
 import {
   LogOut, User, Shield, Code2, ListChecks, Trophy, Target, Heart,
@@ -19,15 +19,6 @@ import './Header.css';
 interface HeaderProps {
   onMenuClick?: () => void;
   unreadMsg?: number;
-}
-
-interface SearchSuggestion {
-  type: 'problem' | 'user' | 'blog' | 'discussion';
-  id: number;
-  title: string;
-  subtitle: string;
-  url: string;
-  avatar_url?: string;
 }
 
 // ── Search suggestion icon helper ──
@@ -49,6 +40,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
   const getImageUploadEnabled = useSettingsStore((s) => s.getImageUploadEnabled);
   const getUploadEnabled = useSettingsStore((s) => s.getUploadEnabled);
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isLuogu = config.site.theme === 'luogu';
   const isHydro = config.site.theme === 'hydro';
@@ -91,8 +83,12 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
     setSearchQuery('');
   };
 
-  const handleSuggestionClick = (url: string) => {
-    navigate(url);
+  const handleSuggestionClick = (url?: string) => {
+    if (url) {
+      navigate(url);
+    } else {
+      handleSearchSubmit(searchQuery);
+    }
     setShowSuggestions(false);
     setSearchQuery('');
   };
@@ -108,14 +104,49 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Close mobile menu on route change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Close mobile menu on Escape key
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileMenuOpen(false);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [mobileMenuOpen]);
+
   // ── Real-time unread count via SSE, fallback to polling ──
   const sseRef = useRef<EventSource | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!user || isLuogu) return;
 
+    const stopPolling = () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    const startPolling = () => {
+      if (pollTimerRef.current) return;
+      const fetchUnread = async () => {
+        try {
+          const data = await api.getUnreadMessagesCount();
+          setLocalUnread(data.count || 0);
+        } catch { /* ignore */ }
+      };
+      fetchUnread();
+      pollTimerRef.current = setInterval(fetchUnread, 30000);
+    };
+
     // Try SSE first (faster, real-time)
-    let sseConnected = false;
     const token = useAuthStore.getState().token;
     if (token) {
       try {
@@ -126,7 +157,8 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
             if (data.count !== undefined) setLocalUnread(data.count);
           } catch { /* ignore */ }
         });
-        es.addEventListener('connected', () => { sseConnected = true; });
+        // When SSE connects, stop any polling that may have started
+        es.addEventListener('connected', () => { stopPolling(); });
         es.onerror = () => { es.close(); };
         sseRef.current = es;
       } catch { /* SSE not supported */ }
@@ -134,23 +166,14 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
 
     // Fallback polling: if SSE hasn't connected within 3s, start polling
     const fallbackTimer = setTimeout(() => {
-      if (sseConnected) return;
-      const fetchUnread = async () => {
-        try {
-          const data = await api.getUnreadMessagesCount();
-          setLocalUnread(data.count || 0);
-        } catch { /* ignore */ }
-      };
-      fetchUnread();
-      const timer = setInterval(fetchUnread, 30000);
-      // Store timer on the ref so cleanup can access it
-      (sseRef as any).pollTimer = timer;
+      if (sseRef.current && sseRef.current.readyState === EventSource.OPEN) return;
+      startPolling();
     }, 3000);
 
     return () => {
       clearTimeout(fallbackTimer);
+      stopPolling();
       if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
-      if ((sseRef as any).pollTimer) clearInterval((sseRef as any).pollTimer);
     };
   }, [user, isLuogu]);
 
@@ -208,7 +231,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
                 ))}
                 <div className="search-suggestion-more" onClick={() => handleSearchSubmit(searchQuery)}>
                   <Search size={12} />
-                  搜索全部 &quot;{searchQuery}&quot;
+                  {t('common.searchAll')} &quot;{searchQuery}&quot;
                 </div>
               </div>
             )}
@@ -279,6 +302,9 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
             <NavLink to="/rankings" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
               <Trophy size={16} />{t('nav.rankings')}
             </NavLink>
+            <NavLink to="/lists" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+              <BookOpen size={16} />{t('nav.lists')}
+            </NavLink>
             <NavLink to="/training" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
               <GraduationCap size={16} />{t('nav.training')}
             </NavLink>
@@ -296,6 +322,11 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
             {user && (
               <NavLink to="/submissions" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
                 <ListChecks size={16} />{t('nav.submissions')}
+              </NavLink>
+            )}
+            {user && (
+              <NavLink to="/tickets" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+                <Ticket size={16} />{t('nav.tickets')}
               </NavLink>
             )}
             {user && (
@@ -327,7 +358,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
           <input
             type="text"
             className="header-search-input"
-            placeholder="搜索题目、用户、博客..."
+            placeholder={t('common.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => { handleSearchInput(e.target.value); setShowSuggestions(true); }}
             onFocus={() => { if (suggestions.length) setShowSuggestions(true); }}
@@ -349,7 +380,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
               ))}
               <div className="search-suggestion-more" onClick={() => handleSearchSubmit(searchQuery)}>
                 <Search size={12} />
-                搜索全部 &quot;{searchQuery}&quot;
+                {t('common.searchAll')} &quot;{searchQuery}&quot;
               </div>
             </div>
           )}

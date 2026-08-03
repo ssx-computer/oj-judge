@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -18,17 +18,18 @@ export default function AdminContests() {
   const [contestPagination, setContestPagination] = useState<any>(null);
   const [contestPage, setContestPage] = useState(1);
 
-  useEffect(() => {
-    fetchAdminContests();
-  }, [contestPage, refreshKey]);
-
-  const fetchAdminContests = async () => {
+  const fetchAdminContests = useCallback(async () => {
     try {
       const data = await api.getAdminContests({ page: contestPage, pageSize: 10 });
       setAdminContests(data.contests);
       setContestPagination(data.pagination);
     } catch (e) { console.error('Failed to fetch contests:', e); }
-  };
+  }, [contestPage]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchAdminContests();
+  }, [fetchAdminContests, refreshKey]);
 
   const handleDeleteContest = async (id: number) => {
     if (!window.confirm(t('admin.deleteConfirm'))) return;

@@ -16,31 +16,29 @@ export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { setToken, fetchUser } = useAuthStore();
-  const [error, setError] = useState<string | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+
+  const token = searchParams.get('token');
+  const oauthError = searchParams.get('error');
+  const errorDesc = searchParams.get('error_description');
+
+  // Derive error from URL params during render
+  const urlError = oauthError
+    ? (errorKeyMap[oauthError] ? t(errorKeyMap[oauthError]) : (errorDesc || oauthError))
+    : (!token ? t('authCallback.authFailed') : null);
+  const error = runtimeError || urlError;
 
   useEffect(() => {
-    const token = searchParams.get('token');
-    const oauthError = searchParams.get('error');
-    const errorDesc = searchParams.get('error_description');
-
-    if (oauthError) {
-      setError(errorKeyMap[oauthError] ? t(errorKeyMap[oauthError]) : (errorDesc || oauthError));
-      return;
-    }
-
-    if (token) {
-      setToken(token);
-      fetchUser()
-        .then(() => {
-          navigate('/', { replace: true });
-        })
-        .catch(() => {
-          setError(t('authCallback.authFailed'));
-        });
-    } else {
-      setError(t('authCallback.authFailed'));
-    }
-  }, [searchParams]);
+    if (!token || oauthError) return;
+    setToken(token);
+    fetchUser()
+      .then(() => {
+        navigate('/', { replace: true });
+      })
+      .catch(() => {
+        setRuntimeError(t('authCallback.authFailed'));
+      });
+  }, [token, oauthError, setToken, fetchUser, navigate]);
 
   if (error) {
     return (

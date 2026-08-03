@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -52,14 +52,10 @@ export default function ContestDetail() {
   const [selectedProblem, setSelectedProblem] = useState<string | null>(null);
   const [myProblemStatus, setMyProblemStatus] = useState<Record<string, { status: string; score: number; best_score: number }>>({});
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endedRefreshDone = useRef(false);
   useDocumentTitle(contest?.title);
 
-  useEffect(() => {
-    if (!id) return;
-    fetchContest();
-  }, [id]);
-
-  const fetchContest = async () => {
+  const fetchContest = useCallback(async () => {
     setLoading(true);
     setLoadError('');
     try {
@@ -78,64 +74,9 @@ export default function ContestDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, user]);
 
-  // Countdown timer
-  useEffect(() => {
-    if (!contest) return;
-
-    const updateCountdown = () => {
-      const now = Date.now();
-      const start = new Date(contest.start_time).getTime();
-      const end = new Date(contest.end_time).getTime();
-
-      if (now < start) {
-        setCountdown(`${t('contests.upcoming')} ${formatCountdown(start - now)}`);
-      } else if (now >= start && now < end) {
-        setCountdown(formatCountdown(end - now));
-      } else {
-        setCountdown(t('contests.ended'));
-        // Contest just ended — refresh data to update status
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        fetchContest();
-        return;
-      }
-    };
-
-    updateCountdown();
-    timerRef.current = setInterval(updateCountdown, 1000);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [contest]);
-
-  useEffect(() => {
-    if (!id || !contest) return;
-    if (activeTab === 'problems') {
-      fetchProblems();
-    } else if (activeTab === 'rankings') {
-      fetchRankings();
-    } else if (activeTab === 'review') {
-      fetchProblems();
-      fetchRankings();
-      fetchRatingChanges();
-    }
-  }, [activeTab, id, contest]);
-
-  // Auto-refresh rankings during running contest
-  useEffect(() => {
-    if (!id || !contest || activeTab !== 'rankings') return;
-    const status = contest.status || getStatus();
-    if (status !== 'running') return;
-    const interval = setInterval(fetchRankings, 15000); // refresh every 15s
-    return () => clearInterval(interval);
-  }, [activeTab, id, contest]);
-
-  const fetchProblems = async () => {
+  const fetchProblems = useCallback(async () => {
     try {
       const data = await api.getContestProblems(Number(id));
       setProblems(data.problems);
@@ -151,9 +92,9 @@ export default function ContestDetail() {
         // ignore - might not be registered
       }
     }
-  };
+  }, [id, user]);
 
-  const fetchRankings = async () => {
+  const fetchRankings = useCallback(async () => {
     try {
       const data = await api.getContestRankings(Number(id));
       setRankings(data.rankings);
@@ -166,7 +107,108 @@ export default function ContestDetail() {
     } catch (e: any) {
       setLoadError(e.message || t('common.error'));
     }
-  };
+  }, [id]);
+
+  const fetchRatingChanges = useCallback(async () => {
+    try {
+      const data = await api.getContestRatingChanges(Number(id));
+      setRatingChanges(data.changes || []);
+    } catch {
+      // contest may not be finalized yet — ignore
+    }
+  }, [id]);
+
+  const getStatus = useCallback((): string => {
+    if (contest?.status) return contest.status;
+    const now = Date.now();
+    const start = new Date(contest.start_time).getTime();
+    const end = new Date(contest.end_time).getTime();
+    if (now < start) return 'upcoming';
+    if (now >= start && now <= end) return 'running';
+    return 'ended';
+  }, [contest]);
+
+  useEffect(() => {
+    if (!id) return;
+    endedRefreshDone.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchContest();
+  }, [fetchContest, id]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (!contest) return;
+
+    const start = new Date(contest.start_time).getTime();
+    const end = new Date(contest.end_time).getTime();
+    const now = Date.now();
+
+    // Contest already ended — no ticking interval needed.
+    // Do a single one-time refresh to pick up the finalized "ended" status,
+    // but only if the backend hasn't already marked it as ended.
+    if (now >= end) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCountdown(t('contests.ended'));
+      if (!endedRefreshDone.current) {
+        endedRefreshDone.current = true;
+        if (contest.status && contest.status !== 'ended') {
+          fetchContest();
+        }
+      }
+      return;
+    }
+
+    const updateCountdown = () => {
+      const now = Date.now();
+      if (now < start) {
+        setCountdown(`${t('contests.upcoming')} ${formatCountdown(start - now)}`);
+      } else if (now >= start && now < end) {
+        setCountdown(formatCountdown(end - now));
+      } else {
+        setCountdown(t('contests.ended'));
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        // Contest just transitioned to ended — refresh once for final data
+        if (!endedRefreshDone.current) {
+          endedRefreshDone.current = true;
+          fetchContest();
+        }
+      }
+    };
+
+    updateCountdown();
+    timerRef.current = setInterval(updateCountdown, 1000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [contest, fetchContest]);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (!id || !contest) return;
+    if (activeTab === 'problems') {
+      fetchProblems();
+    } else if (activeTab === 'rankings') {
+      fetchRankings();
+    } else if (activeTab === 'review') {
+      fetchProblems();
+      fetchRankings();
+      fetchRatingChanges();
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [activeTab, id, contest, fetchProblems, fetchRankings, fetchRatingChanges]);
+
+  // Auto-refresh rankings during running contest
+  useEffect(() => {
+    if (!id || !contest || activeTab !== 'rankings') return;
+    const status = contest.status || getStatus();
+    if (status !== 'running') return;
+    const interval = setInterval(fetchRankings, 15000); // refresh every 15s
+    return () => clearInterval(interval);
+  }, [activeTab, id, contest, fetchRankings, getStatus]);
 
   const handleRegister = async () => {
     if (!user || !id || registering) return;
@@ -208,25 +250,6 @@ export default function ContestDetail() {
     } catch (e: any) {
       addToast('error', e.message || t('common.error'));
     }
-  };
-
-  const fetchRatingChanges = async () => {
-    try {
-      const data = await api.getContestRatingChanges(Number(id));
-      setRatingChanges(data.changes || []);
-    } catch {
-      // contest may not be finalized yet — ignore
-    }
-  };
-
-  const getStatus = (): string => {
-    if (contest?.status) return contest.status;
-    const now = Date.now();
-    const start = new Date(contest.start_time).getTime();
-    const end = new Date(contest.end_time).getTime();
-    if (now < start) return 'upcoming';
-    if (now >= start && now <= end) return 'running';
-    return 'ended';
   };
 
   const getStatusLabel = (status: string) => {

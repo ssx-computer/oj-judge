@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -33,11 +33,7 @@ export default function Tickets() {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   useDocumentTitle(t('tickets.title'));
 
-  useEffect(() => {
-    fetchTickets();
-  }, [statusFilter, categoryFilter]);
-
-  const fetchTickets = async () => {
+  const fetchTickets = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
@@ -52,7 +48,12 @@ export default function Tickets() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusFilter, categoryFilter]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchTickets();
+  }, [fetchTickets]);
 
   const getStatusLabel = (status: string) => {
     if (status === 'open') return t('tickets.open');
