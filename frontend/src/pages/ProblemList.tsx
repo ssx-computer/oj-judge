@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -34,26 +34,16 @@ export default function ProblemList() {
   const [attemptedProblems, setAttemptedProblems] = useState<Set<number>>(new Set());
   useDocumentTitle(t('problemList.title'));
 
-  useEffect(() => {
-    fetchProblems();
-    if (user) {
-      fetchUserProgress();
-    }
-    fetchTags();
-  }, [page, debouncedSearch, selectedTag, selectedDifficulty, passRateFilter, statusFilter, user]);
-
-  const fetchTags = async () => {
+  const fetchTags = useCallback(async () => {
     try {
       const data = await api.getProblemTags();
       setAllTags(data.tags);
     } catch {
       // fallback: extract from current page results
     }
-  };
+  }, []);
 
-  const fetchProblems = async () => {
-    setLoading(true);
-    setError('');
+  const fetchProblems = useCallback(async () => {
     try {
       const data = await api.getProblems({
         page,
@@ -64,6 +54,7 @@ export default function ProblemList() {
       });
       setProblems(data.problems);
       setPagination(data.pagination);
+      setError('');
     } catch (e: any) {
       addToast('error', t('common.loadError'));
       console.error('Failed to fetch problems:', e);
@@ -71,9 +62,9 @@ export default function ProblemList() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedSearch, selectedTag, selectedDifficulty, addToast]);
 
-  const fetchUserProgress = async () => {
+  const fetchUserProgress = useCallback(async () => {
     try {
       const solved = await api.getUserSolved();
       const solvedIds = new Set(solved.problems.map((p: any) => p.id));
@@ -90,7 +81,16 @@ export default function ProblemList() {
       addToast('error', t('common.error'));
       console.error('Failed to fetch user progress:', e);
     }
-  };
+  }, [addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchProblems();
+    if (user) {
+      fetchUserProgress();
+    }
+    fetchTags();
+  }, [user, fetchProblems, fetchUserProgress, fetchTags]);
 
   const getProblemStatus = (problemId: number) => {
     if (solvedProblems.has(problemId)) return 'accepted';
@@ -209,7 +209,7 @@ export default function ProblemList() {
         <div className="error-banner">
           <AlertCircle size={16} />
           <span>{error}</span>
-          <button className="btn btn-secondary btn-sm" onClick={fetchProblems}>{t('common.retry')}</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); setError(''); fetchProblems(); }}>{t('common.retry')}</button>
         </div>
       )}
 

@@ -33,6 +33,8 @@ const zh = {
   // Common
   common: {
     search: '搜索',
+    searchPlaceholder: '搜索题目、用户、博客...',
+    searchAll: '搜索全部',
     loading: '加载中...',
     save: '保存',
     cancel: '取消',

@@ -67,7 +67,7 @@ export default function AIChat() {
             setSelectedModel(data.model);
           }
         }
-      } catch (e) {
+      } catch {
         if (!cancelled) {
           setStatusError(true);
         }
@@ -148,7 +148,7 @@ export default function AIChat() {
               const tc = updated[lastIdx].tool_calls || [];
               updated[lastIdx] = {
                 ...updated[lastIdx],
-                tool_calls: [...tc, { name: event.data.name, arguments: event.data.arguments, result_summary: '' }],
+                tool_calls: [...tc, { name: event.data.name || '', arguments: event.data.arguments || {}, result_summary: '' }],
               };
             }
             return updated;
@@ -168,7 +168,7 @@ export default function AIChat() {
               }
               if (targetIdx >= 0) {
                 const newTc = [...tc];
-                newTc[targetIdx] = { ...newTc[targetIdx], result_summary: event.data.result_summary };
+                newTc[targetIdx] = { ...newTc[targetIdx], result_summary: event.data.result_summary || "" };
                 updated[lastIdx] = { ...updated[lastIdx], tool_calls: newTc };
               }
             }

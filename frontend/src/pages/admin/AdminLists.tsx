@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -18,17 +18,18 @@ export default function AdminLists() {
   const [listPagination, setListPagination] = useState<any>(null);
   const [listPage, setListPage] = useState(1);
 
-  useEffect(() => {
-    fetchAdminLists();
-  }, [listPage, refreshKey]);
-
-  const fetchAdminLists = async () => {
+  const fetchAdminLists = useCallback(async () => {
     try {
       const data = await api.getAdminLists({ page: listPage, pageSize: 10 });
       setAdminLists(data.lists);
       setListPagination(data.pagination);
     } catch (e) { console.error('Failed to fetch lists:', e); }
-  };
+  }, [listPage]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchAdminLists();
+  }, [fetchAdminLists, refreshKey]);
 
   const handleDeleteList = async (id: number) => {
     if (!window.confirm(t('admin.deleteConfirm'))) return;

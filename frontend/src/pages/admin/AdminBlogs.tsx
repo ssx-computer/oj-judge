@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -42,11 +42,7 @@ export default function AdminBlogs() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => {
-    fetchBlogs();
-  }, [page, debouncedSearch, statusFilter]);
-
-  const fetchBlogs = async () => {
+  const fetchBlogs = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getAdminBlogs({
@@ -62,7 +58,12 @@ export default function AdminBlogs() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedSearch, statusFilter, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchBlogs();
+  }, [fetchBlogs]);
 
   const handleOpenDetail = async (blog: any) => {
     setSelectedBlog(blog);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { t } from '../../i18n';
@@ -30,15 +30,42 @@ export default function AdminSql() {
   const [addingRow, setAddingRow] = useState(false);
   const [newRowData, setNewRowData] = useState<Record<string, any>>({});
 
-  useEffect(() => {
-    if (sqlMode === 'visual') {
-      fetchSqlTables();
+  const fetchSqlTables = useCallback(async () => {
+    try {
+      const data = await api.getSqlTables();
+      setSqlTables(data.tables);
+      if (data.tables.length > 0) {
+        setSelectedTable((prev) => prev || data.tables[0]);
+      }
+    } catch (e) { console.error('Failed to fetch tables:', e); }
+  }, []);
+
+  const fetchTableData = useCallback(async () => {
+    if (!selectedTable) return;
+    try {
+      const data = await api.getTableData(selectedTable, { page: tablePage, pageSize: 20 });
+      setTableData(data.rows);
+      setTablePagination(data.pagination);
+      const schemaData = await api.getTableSchema(selectedTable);
+      setTableSchema(schemaData.schema);
+    } catch (e: any) {
+      console.error('Failed to fetch table data:', e);
     }
-  }, [sqlMode]);
+  }, [selectedTable, tablePage]);
 
   useEffect(() => {
-    if (selectedTable) fetchTableData();
-  }, [selectedTable, tablePage]);
+    if (sqlMode === 'visual') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchSqlTables();
+    }
+  }, [sqlMode, fetchSqlTables]);
+
+  useEffect(() => {
+    if (selectedTable) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchTableData();
+    }
+  }, [fetchTableData, selectedTable]);
 
   const handleExecuteSql = async () => {
     setSqlExecuting(true);
@@ -54,29 +81,6 @@ export default function AdminSql() {
       setSqlError(e.message || t('common.error'));
     } finally {
       setSqlExecuting(false);
-    }
-  };
-
-  const fetchSqlTables = async () => {
-    try {
-      const data = await api.getSqlTables();
-      setSqlTables(data.tables);
-      if (data.tables.length > 0 && !selectedTable) {
-        setSelectedTable(data.tables[0]);
-      }
-    } catch (e) { console.error('Failed to fetch tables:', e); }
-  };
-
-  const fetchTableData = async () => {
-    if (!selectedTable) return;
-    try {
-      const data = await api.getTableData(selectedTable, { page: tablePage, pageSize: 20 });
-      setTableData(data.rows);
-      setTablePagination(data.pagination);
-      const schemaData = await api.getTableSchema(selectedTable);
-      setTableSchema(schemaData.schema);
-    } catch (e: any) {
-      console.error('Failed to fetch table data:', e);
     }
   };
 

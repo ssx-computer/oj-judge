@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, type ProblemCollection, type CollectionItem } from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { useToastStore } from '../store/toast';
 import {
@@ -12,46 +12,24 @@ import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import './Collections.css';
 
-interface Collection {
-  id: number;
-  name: string;
-  description: string;
-  is_public: number;
-  problem_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-interface CollectionItem {
-  id: number;
-  problem_id: number;
-  note: string;
-  sort_order: number;
-  created_at: string;
-  title: string;
-  slug: string;
-  difficulty: string;
-  tags: string;
-}
-
 export default function Collections() {
   const { user } = useAuthStore();
   const { addToast } = useToastStore();
   const navigate = useNavigate();
-  const [collections, setCollections] = useState<Collection[]>([]);
+  const [collections, setCollections] = useState<ProblemCollection[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
   // Create/edit modal state
   const [showModal, setShowModal] = useState(false);
-  const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
+  const [editingCollection, setEditingCollection] = useState<ProblemCollection | null>(null);
   const [formName, setFormName] = useState('');
   const [formDesc, setFormDesc] = useState('');
   const [formPublic, setFormPublic] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Detail view state
-  const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
+  const [selectedCollection, setSelectedCollection] = useState<ProblemCollection | null>(null);
   const [items, setItems] = useState<CollectionItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
 
@@ -74,6 +52,7 @@ export default function Collections() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (user) fetchCollections();
   }, [user, fetchCollections]);
 
@@ -85,7 +64,7 @@ export default function Collections() {
     setShowModal(true);
   };
 
-  const openEditModal = (col: Collection, e: React.MouseEvent) => {
+  const openEditModal = (col: ProblemCollection, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingCollection(col);
     setFormName(col.name);
@@ -146,7 +125,7 @@ export default function Collections() {
     }
   };
 
-  const selectCollection = async (col: Collection) => {
+  const selectCollection = async (col: ProblemCollection) => {
     setSelectedCollection(col);
     setItemsLoading(true);
     try {
@@ -202,7 +181,7 @@ export default function Collections() {
         <div className="error-banner">
           <AlertCircle size={16} />
           <span>{t('common.loadError')}</span>
-          <button className="btn btn-secondary btn-sm" onClick={fetchCollections}>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); setLoadError(false); fetchCollections(); }}>
             {t('common.retry')}
           </button>
         </div>
@@ -328,7 +307,7 @@ export default function Collections() {
                         <span className="col-title">{item.title}</span>
                         <span
                           className="col-difficulty"
-                          style={{ color: DIFFICULTY_COLORS[item.difficulty] }}
+                          style={{ color: DIFFICULTY_COLORS[item.difficulty || ''] }}
                         >
                           {item.difficulty}
                         </span>

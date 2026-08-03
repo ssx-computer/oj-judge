@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
@@ -31,22 +31,7 @@ export default function AdminProblems() {
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    fetchAdminProblems();
-  }, [problemPage, debouncedProblemSearch, refreshKey]);
-
-  // Debounce problem search
-  useEffect(() => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => {
-      setDebouncedProblemSearch(problemSearch);
-    }, 400);
-    return () => {
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    };
-  }, [problemSearch]);
-
-  const fetchAdminProblems = async () => {
+  const fetchAdminProblems = useCallback(async () => {
     try {
       const data = await api.getAdminProblems({
         page: problemPage,
@@ -58,7 +43,23 @@ export default function AdminProblems() {
     } catch (e) {
       console.error('Failed to fetch admin problems:', e);
     }
-  };
+  }, [problemPage, debouncedProblemSearch]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchAdminProblems();
+  }, [fetchAdminProblems, refreshKey]);
+
+  // Debounce problem search
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedProblemSearch(problemSearch);
+    }, 400);
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [problemSearch]);
 
   const handleDeleteProblem = async (id: number) => {
     if (!window.confirm(t('admin.deleteConfirm'))) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -23,30 +23,18 @@ export default function AdminPlagiarism() {
   const [triggering, setTriggering] = useState(false);
   const [selectedReport, setSelectedReport] = useState<any>(null);
 
-  useEffect(() => {
-    fetchContests();
-  }, []);
-
-  useEffect(() => {
-    if (selectedContestId) {
-      fetchReports();
-      setSelectedReport(null);
-    } else {
-      setReports([]);
-    }
-  }, [selectedContestId]);
-
-  const fetchContests = async () => {
+  const fetchContests = useCallback(async () => {
     try {
       const data = await api.getContests({ pageSize: 100 });
       setContests(data.contests);
     } catch (e) {
       console.error('Failed to fetch contests:', e);
     }
-  };
+  }, []);
 
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     if (!selectedContestId) return;
+    setSelectedReport(null);
     setLoading(true);
     try {
       const data = await api.getPlagiarismReports(selectedContestId);
@@ -56,7 +44,22 @@ export default function AdminPlagiarism() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedContestId, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchContests();
+  }, [fetchContests]);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (selectedContestId) {
+      fetchReports();
+    } else {
+      setReports([]);
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [selectedContestId, fetchReports]);
 
   const handleTrigger = async () => {
     if (!selectedContestId) return;

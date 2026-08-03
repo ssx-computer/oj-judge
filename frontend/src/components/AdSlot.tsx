@@ -44,7 +44,7 @@ export default function AdSlot({ position, format = 'auto', className }: AdSlotP
     if (!globalEnabled || !clientId || !slot || !slotEnabled) return;
     ensureAdsenseScript(clientId);
     try {
-      // @ts-ignore
+      // @ts-expect-error — adsbygoogle is injected by the Adsense script at runtime
       (window.adsbygoogle = window.adsbygoogle || []).push({});
     } catch { /* ignore */ }
   }, [globalEnabled, clientId, slot, slotEnabled]);

@@ -6,6 +6,13 @@ import { Trophy, ChevronRight, Plus, X, Send, Edit3 } from 'lucide-react';
 import { t } from '../i18n';
 import './CreateContest.css';
 
+function toLocalDatetimeString(dateStr: string) {
+  const d = new Date(dateStr);
+  const offset = d.getTimezoneOffset();
+  const local = new Date(d.getTime() - offset * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 export default function CreateContest() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
@@ -87,13 +94,6 @@ export default function CreateContest() {
     fetchContest();
   }, [contestId, isEditing]);
 
-  const toLocalDatetimeString = (dateStr: string) => {
-    const d = new Date(dateStr);
-    const offset = d.getTimezoneOffset();
-    const local = new Date(d.getTime() - offset * 60000);
-    return local.toISOString().slice(0, 16);
-  };
-
   useEffect(() => {
     if (searchQuery.trim()) {
       const timer = setTimeout(async () => {
@@ -109,6 +109,7 @@ export default function CreateContest() {
       }, 300);
       return () => clearTimeout(timer);
     } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearchResults([]);
     }
   }, [searchQuery, selectedProblems]);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -15,13 +15,7 @@ export default function ProblemListDetail() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => {
-    if (!id) return;
-    fetchList();
-  }, [id]);
-
-  const fetchList = async () => {
-    setLoading(true);
+  const fetchList = useCallback(async () => {
     try {
       const data = await api.getProblemList(Number(id));
       setList(data.list);
@@ -33,7 +27,13 @@ export default function ProblemListDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, addToast]);
+
+  useEffect(() => {
+    if (!id) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchList();
+  }, [id, fetchList]);
 
   if (loading) {
     return <LoadingSpinner />;

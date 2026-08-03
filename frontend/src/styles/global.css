@@ -67,6 +67,7 @@
   --text-primary: #0f172a;
   --text-secondary: #475569;
   --text-muted: #94a3b8;
+  --text-tertiary: #64748b;
   --accent: #4f46e5;
   --accent-hover: #4338ca;
   --accent-light: rgba(79, 70, 229, 0.08);
@@ -99,7 +100,6 @@
 /* ═══════════════════════════════════════════════════
    Luogu Theme  — 洛谷风格复刻
    ═══════════════════════════════════════════════════ */
-:root,
 [data-theme-style="luogu"] {
   --bg-primary: #F5F5F5;
   --bg-secondary: #FFFFFF;
@@ -544,6 +544,7 @@ input, textarea, select {
   --text-primary: #e0e0e0;
   --text-secondary: #a0a8b8;
   --text-muted: #6a7288;
+  --text-tertiary: #858da0;
   --accent: #6db3f2;
   --accent-hover: #5a9ed9;
   --accent-light: rgba(109, 179, 242, 0.15);

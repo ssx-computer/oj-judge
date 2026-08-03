@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { useToastStore } from '../../store/toast';
@@ -25,11 +25,7 @@ export default function AdminAuditLogs() {
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, [search]);
 
-  useEffect(() => {
-    fetchLogs();
-  }, [page, debouncedSearch, ipFilter, actionFilter]);
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getAuditLogs({
@@ -47,7 +43,12 @@ export default function AdminAuditLogs() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedSearch, ipFilter, actionFilter]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchLogs();
+  }, [fetchLogs]);
 
   const [banTarget, setBanTarget] = useState<{ type: 'ip' | 'device'; value: string } | null>(null);
   const [banReason, setBanReason] = useState('');

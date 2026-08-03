@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -40,11 +40,7 @@ export default function AdminTraining() {
   const [newChapterDesc, setNewChapterDesc] = useState('');
   const [newProblemInputs, setNewProblemInputs] = useState<Record<number, string>>({});
 
-  useEffect(() => {
-    fetchPlans();
-  }, [page, refreshKey]);
-
-  const fetchPlans = async () => {
+  const fetchPlans = useCallback(async () => {
     try {
       const data = await api.getTrainingPlans({ page, pageSize: 10 });
       setPlans(data.plans);
@@ -52,7 +48,12 @@ export default function AdminTraining() {
     } catch (e) {
       console.error('Failed to fetch training plans:', e);
     }
-  };
+  }, [page]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchPlans();
+  }, [fetchPlans, refreshKey]);
 
   const handleCreatePlan = async () => {
     if (!newPlan.title.trim()) {

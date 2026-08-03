@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -7,6 +7,7 @@ import { Trophy, Calendar, Users, Filter, PlusCircle, AlertCircle } from 'lucide
 import { t } from '../i18n';
 import { usePermissions } from '../hooks/usePermissions';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useNow } from '../hooks/useNow';
 import './Contests.css';
 
 const STATUS_OPTIONS = ['all', 'upcoming', 'running', 'ended'] as const;
@@ -23,13 +24,10 @@ export default function Contests() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const now = useNow();
   useDocumentTitle(t('contests.title'));
 
-  useEffect(() => {
-    fetchContests();
-  }, [statusFilter]);
-
-  const fetchContests = async () => {
+  const fetchContests = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
@@ -43,7 +41,12 @@ export default function Contests() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusFilter]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchContests();
+  }, [fetchContests]);
 
   const getStatusLabel = (status: string) => {
     if (status === 'upcoming') return t('contests.upcoming');
@@ -53,7 +56,6 @@ export default function Contests() {
 
   const getContestStatus = (contest: any): string => {
     if (contest.status) return contest.status;
-    const now = Date.now();
     const start = new Date(contest.start_time).getTime();
     const end = new Date(contest.end_time).getTime();
     if (now < start) return 'upcoming';

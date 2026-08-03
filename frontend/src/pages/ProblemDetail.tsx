@@ -108,14 +108,15 @@ export default function ProblemDetail() {
 
   useEffect(() => {
     if (!slug) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    setLoadError('');
     api.getProblem(slug)
       .then((data) => {
         if (!isMountedRef.current) return;
         setProblem(data.problem);
         setSampleTestcases(data.sampleTestcases);
         setStats(data.stats);
+        setLoadError('');
       })
       .catch((e) => {
         if (!isMountedRef.current) return;
@@ -338,11 +339,8 @@ export default function ProblemDetail() {
   useEffect(() => {
     if (!slug) return;
     const savedDraft = localStorage.getItem(DRAFT_KEY(slug, language));
-    if (savedDraft) {
-      setSourceCode(savedDraft);
-    } else {
-      setSourceCode(LANGUAGE_TEMPLATES[language] || '');
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSourceCode(savedDraft || LANGUAGE_TEMPLATES[language] || '');
   }, [slug, language]);
 
   // ── Auto-save draft to localStorage (Bug 6 fix) ──
@@ -434,7 +432,45 @@ export default function ProblemDetail() {
     setLanguage(lang);
   };
 
-  const handleSubmit = async () => {
+  // ── Polling with cleanup (Bug 2 fix) ──
+
+  const pollSubmission = useCallback((id: number) => {
+    const maxAttempts = 120;
+    let attempts = 0;
+
+    const poll = async () => {
+      if (!isMountedRef.current) return;
+      try {
+        const data = await api.getSubmission(id);
+        if (!isMountedRef.current) return;
+        const status = data.submission.status;
+        setLastStatus(status);
+
+        if (status !== 'pending' && status !== 'running') {
+          if (status === 'accepted') {
+            setSubmissionStatus('accepted');
+          } else {
+            setSubmissionStatus((prev) => prev === 'none' ? 'attempted' : prev);
+          }
+          return;
+        }
+
+        attempts++;
+        if (attempts < maxAttempts) {
+          pollingRef.current = setTimeout(poll, 1500);
+        }
+      } catch {
+        attempts++;
+        if (attempts < maxAttempts && isMountedRef.current) {
+          pollingRef.current = setTimeout(poll, 2000);
+        }
+      }
+    };
+
+    poll();
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
     if (!user) {
       navigate('/login');
       return;
@@ -489,7 +525,7 @@ export default function ProblemDetail() {
     } finally {
       if (isMountedRef.current) setSubmitting(false);
     }
-  };
+  }, [user, navigate, problem, submitting, settingsLoaded, addToast, captchaEnabled, captchaAnswer, language, sourceCode, captchaUuid, slug, pollSubmission]);
 
   // ── AI code completion ──
 
@@ -536,44 +572,6 @@ export default function ProblemDetail() {
     }
   };
 
-  // ── Polling with cleanup (Bug 2 fix) ──
-
-  const pollSubmission = useCallback((id: number) => {
-    const maxAttempts = 120;
-    let attempts = 0;
-
-    const poll = async () => {
-      if (!isMountedRef.current) return;
-      try {
-        const data = await api.getSubmission(id);
-        if (!isMountedRef.current) return;
-        const status = data.submission.status;
-        setLastStatus(status);
-
-        if (status !== 'pending' && status !== 'running') {
-          if (status === 'accepted') {
-            setSubmissionStatus('accepted');
-          } else {
-            setSubmissionStatus((prev) => prev === 'none' ? 'attempted' : prev);
-          }
-          return;
-        }
-
-        attempts++;
-        if (attempts < maxAttempts) {
-          pollingRef.current = setTimeout(poll, 1500);
-        }
-      } catch {
-        attempts++;
-        if (attempts < maxAttempts && isMountedRef.current) {
-          pollingRef.current = setTimeout(poll, 2000);
-        }
-      }
-    };
-
-    poll();
-  }, []);
-
   // ── Ctrl+Enter shortcut (Bug 7 fix) ──
 
   useEffect(() => {
@@ -585,7 +583,7 @@ export default function ProblemDetail() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSubmit, submitting, problem, user, sourceCode, language, captchaAnswer, captchaUuid, captchaEnabled, settingsLoaded]);
+  }, [handleSubmit]);
 
   const getLangExtension = (lang: string) => {
     switch (lang) {

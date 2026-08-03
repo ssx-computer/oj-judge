@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { useSettingsStore } from '../store/settings';
@@ -29,18 +29,15 @@ export default function MyFiles() {
   const imageUploadAllowed = getImageUploadEnabled() || perms.canManageUploads;
   const fileUploadAllowed = getUploadEnabled() || perms.canManageUploads;
 
-  // Auto-switch tab if current tab's upload is disabled
-  useEffect(() => {
-    if (activeTab === 'image' && !imageUploadAllowed && fileUploadAllowed) {
-      setActiveTab('file');
-    } else if (activeTab === 'file' && !fileUploadAllowed && imageUploadAllowed) {
-      setActiveTab('image');
-    }
-  }, [imageUploadAllowed, fileUploadAllowed]);
+  // Derive effective tab (auto-switch if current tab's upload is disabled)
+  const effectiveTab: 'image' | 'file' =
+    (activeTab === 'image' && !imageUploadAllowed && fileUploadAllowed) ? 'file' :
+    (activeTab === 'file' && !fileUploadAllowed && imageUploadAllowed) ? 'image' :
+    activeTab;
 
-  const fetchUploads = async (p: number = page) => {
+  const fetchUploads = useCallback(async (p: number = page) => {
     try {
-      const data = await api.getUploads({ page: p, pageSize: 20, type: activeTab });
+      const data = await api.getUploads({ page: p, pageSize: 20, type: effectiveTab });
       setUploads(data.uploads);
       setTotalPages(data.pagination.totalPages);
     } catch (e: any) {
@@ -48,19 +45,20 @@ export default function MyFiles() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [effectiveTab, page, addToast]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetchUploads(1);
-  }, [activeTab]);
+  }, [fetchUploads]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      if (activeTab === 'image') {
+      if (effectiveTab === 'image') {
         await api.uploadImage(file);
         addToast('success', t('common.uploadSuccess'));
       } else {
@@ -105,7 +103,7 @@ export default function MyFiles() {
     }
   };
 
-  const canUploadCurrentTab = activeTab === 'image' ? imageUploadAllowed : fileUploadAllowed;
+  const canUploadCurrentTab = effectiveTab === 'image' ? imageUploadAllowed : fileUploadAllowed;
 
   if (!user) return null;
 
@@ -115,12 +113,12 @@ export default function MyFiles() {
 
       <div className="myfiles-tabs">
         {imageUploadAllowed && (
-          <button className={`tab-btn ${activeTab === 'image' ? 'active' : ''}`} onClick={() => setActiveTab('image')}>
+          <button className={`tab-btn ${effectiveTab === 'image' ? 'active' : ''}`} onClick={() => setActiveTab('image')}>
             <Image size={16} /> {t('common.image')}
           </button>
         )}
         {fileUploadAllowed && (
-          <button className={`tab-btn ${activeTab === 'file' ? 'active' : ''}`} onClick={() => setActiveTab('file')}>
+          <button className={`tab-btn ${effectiveTab === 'file' ? 'active' : ''}`} onClick={() => setActiveTab('file')}>
             <FileText size={16} /> {t('common.file')}
           </button>
         )}
@@ -131,7 +129,7 @@ export default function MyFiles() {
           <input
             ref={fileInputRef}
             type="file"
-            accept={activeTab === 'image' ? 'image/*' : undefined}
+            accept={effectiveTab === 'image' ? 'image/*' : undefined}
             onChange={handleUpload}
             style={{ display: 'none' }}
           />
@@ -141,7 +139,7 @@ export default function MyFiles() {
             disabled={uploading}
           >
             <Upload size={14} />
-            {uploading ? t('common.loading') : (activeTab === 'image' ? t('common.uploadImage') : t('common.uploadFile'))}
+            {uploading ? t('common.loading') : (effectiveTab === 'image' ? t('common.uploadImage') : t('common.uploadFile'))}
           </button>
         </div>
       )}
@@ -153,7 +151,7 @@ export default function MyFiles() {
       ) : (
         <>
           <div className="myfiles-grid">
-            {activeTab === 'image' ? uploads.map((item: any) => (
+            {effectiveTab === 'image' ? uploads.map((item: any) => (
               <div key={item.id} className="myfiles-card image-card">
                 <div className="image-preview">
                   <a href={item.url} target="_blank" rel="noopener noreferrer">

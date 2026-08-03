@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -25,22 +25,7 @@ export default function AdminUsers() {
   const [editingPermissions, setEditingPermissions] = useState<number | null>(null);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
-  useEffect(() => {
-    fetchUserList();
-  }, [userPage, debouncedUserSearch, refreshKey]);
-
-  // Debounce user search
-  useEffect(() => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => {
-      setDebouncedUserSearch(userSearch);
-    }, 400);
-    return () => {
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    };
-  }, [userSearch]);
-
-  const fetchUserList = async () => {
+  const fetchUserList = useCallback(async () => {
     try {
       const data = await api.getUserList({
         page: userPage,
@@ -52,7 +37,23 @@ export default function AdminUsers() {
     } catch (e) {
       console.error('Failed to fetch users:', e);
     }
-  };
+  }, [userPage, debouncedUserSearch]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchUserList();
+  }, [fetchUserList, refreshKey]);
+
+  // Debounce user search
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedUserSearch(userSearch);
+    }, 400);
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [userSearch]);
 
   const handleRoleChange = async (userId: number, newRole: string) => {
     try {

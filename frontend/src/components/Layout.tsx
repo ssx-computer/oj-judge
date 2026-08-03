@@ -40,10 +40,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   // Poll unread messages (for luogu sidebar + default header)
   useEffect(() => {
-    if (!user) {
-      setUnreadMsg(0);
-      return;
-    }
+    if (!user) return;
     const fetchUnread = async () => {
       try {
         const data = await api.getUnreadMessagesCount();
@@ -54,6 +51,9 @@ export default function Layout({ children }: { children: ReactNode }) {
     const timer = setInterval(fetchUnread, 30000);
     return () => clearInterval(timer);
   }, [user]);
+
+  // Hide unread count when logged out without a synchronous setState in effect
+  const displayUnreadMsg = user ? unreadMsg : 0;
 
   // Contest notifications
   useContestNotifications();
@@ -81,14 +81,14 @@ export default function Layout({ children }: { children: ReactNode }) {
     <div className="layout">
       <Header
         onMenuClick={() => setSidebarOpen((v) => !v)}
-        unreadMsg={unreadMsg}
+        unreadMsg={displayUnreadMsg}
       />
       {isLuogu ? (
         <div className="layout-body">
           <Sidebar
             open={sidebarOpen}
             onClose={() => setSidebarOpen(false)}
-            unreadMsg={unreadMsg}
+            unreadMsg={displayUnreadMsg}
           />
           {sidebarOpen && (
             <div

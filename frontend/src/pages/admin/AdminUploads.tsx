@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -19,17 +19,18 @@ export default function AdminUploads() {
   const [uploadPage, setUploadPage] = useState(1);
   const [uploadTypeFilter, setUploadTypeFilter] = useState('');
 
-  useEffect(() => {
-    fetchAdminUploads();
-  }, [uploadPage, uploadTypeFilter, refreshKey]);
-
-  const fetchAdminUploads = async () => {
+  const fetchAdminUploads = useCallback(async () => {
     try {
       const data = await api.getUploads({ page: uploadPage, pageSize: 10, type: uploadTypeFilter || undefined });
       setAdminUploads(data.uploads);
       setUploadPagination(data.pagination);
     } catch (e) { console.error('Failed to fetch uploads:', e); }
-  };
+  }, [uploadPage, uploadTypeFilter]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchAdminUploads();
+  }, [fetchAdminUploads, refreshKey]);
 
   const handleDeleteUpload = async (id: number) => {
     if (!window.confirm(t('common.deleteConfirm'))) return;

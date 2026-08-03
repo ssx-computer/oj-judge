@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -22,11 +22,7 @@ export default function Training() {
   const [searchInput, setSearchInput] = useState('');
   useDocumentTitle(t('training.title'));
 
-  useEffect(() => {
-    fetchPlans();
-  }, [search]);
-
-  const fetchPlans = async () => {
+  const fetchPlans = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
@@ -38,7 +34,12 @@ export default function Training() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchPlans();
+  }, [fetchPlans]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../store/auth';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -72,18 +72,19 @@ export default function AdminDashboard() {
   useDocumentTitle(t('admin.dashboard'));
   const [stats, setStats] = useState<any>(null);
 
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const data = await api.getAdminStats();
       setStats(data);
     } catch (e) {
       console.error('Failed to fetch stats:', e);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchStats();
+  }, [fetchStats]);
 
   if (!user || (!perms.hasAllPermissions && !perms.canManageContests && !perms.canManageProblems && !perms.canManageLists && !perms.canManageTickets && !perms.canManageUploads)) {
     return (

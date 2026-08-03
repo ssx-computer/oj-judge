@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -23,11 +23,7 @@ export default function AdminSolutionReview() {
   const [rejectingId, setRejectingId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  useEffect(() => {
-    fetchSolutions();
-  }, [page, status]);
-
-  const fetchSolutions = async () => {
+  const fetchSolutions = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getPendingSolutions({ page, pageSize: 20, status });
@@ -38,7 +34,12 @@ export default function AdminSolutionReview() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, status, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchSolutions();
+  }, [fetchSolutions]);
 
   const handleApprove = async (id: number) => {
     try {

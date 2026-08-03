@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -35,11 +35,7 @@ export default function AdminReports() {
   const [updateStatus, setUpdateStatus] = useState('in_progress');
   const [adminReply, setAdminReply] = useState('');
 
-  useEffect(() => {
-    fetchReports();
-  }, [page, statusFilter]);
-
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getProblemReports({ page, pageSize: 20, status: statusFilter || undefined });
@@ -50,7 +46,12 @@ export default function AdminReports() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, statusFilter, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchReports();
+  }, [fetchReports]);
 
   const handleOpenDetail = (r: any) => {
     setSelectedReport(r);

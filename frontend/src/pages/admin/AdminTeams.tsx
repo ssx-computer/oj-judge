@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -22,11 +22,7 @@ export default function AdminTeams() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => {
-    fetchTeams();
-  }, [page, debouncedSearch]);
-
-  const fetchTeams = async () => {
+  const fetchTeams = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getAdminTeams({
@@ -41,7 +37,12 @@ export default function AdminTeams() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedSearch, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchTeams();
+  }, [fetchTeams]);
 
   const handleToggleVisibility = async (team: any) => {
     const newVisibility = !team.is_public;

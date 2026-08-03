@@ -174,7 +174,7 @@
 }
 
 .profile-follow-stats .follow-stat strong {
-  color: var(--text);
+  color: var(--text-primary);
   font-weight: 600;
 }
 

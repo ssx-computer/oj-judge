@@ -14,6 +14,7 @@ import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, M
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import FollowButton from '../components/FollowButton';
+import { useNow } from '../hooks/useNow';
 import './Profile.css';
 
 export default function Profile() {
@@ -50,6 +51,7 @@ export default function Profile() {
   useDocumentTitle(profileUser?.username ? `${profileUser.username}'s Profile` : t('profile.title'));
 
   const isOwnProfile = !username || username === currentUser?.username;
+  const now = useNow();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -123,7 +125,7 @@ export default function Profile() {
       }
     };
     if (data?.user) fetchExtraData();
-  }, [data?.user]);
+  }, [data?.user, isOwnProfile, currentUser, username]);
 
   if (loading) {
     return <LoadingSpinner message={t('profile.loadingProfile')} />;
@@ -614,7 +616,6 @@ export default function Profile() {
           <h2 className="section-title">{t('profile.contestHistory')}</h2>
           <div className="contest-history-list">
             {contests.map((contest: any) => {
-              const now = Date.now();
               const start = new Date(contest.start_time).getTime();
               const end = new Date(contest.end_time).getTime();
               let statusLabel: string;

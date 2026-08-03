@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -16,11 +16,7 @@ export default function Teams() {
   const { user } = useAuthStore();
   useDocumentTitle(t('teams.title'));
 
-  useEffect(() => {
-    fetchTeams();
-  }, [search]);
-
-  const fetchTeams = async () => {
+  const fetchTeams = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getTeams({ search: search || undefined, pageSize: 30 });
@@ -30,7 +26,12 @@ export default function Teams() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchTeams();
+  }, [fetchTeams]);
 
   return (
     <div className="teams-page">

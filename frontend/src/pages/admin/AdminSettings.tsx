@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
@@ -43,13 +43,7 @@ export default function AdminSettings() {
   const fetchSettings = useSettingsStore((s) => s.fetchSettings);
   const addToast = useToastStore((s) => s.addToast);
 
-  useEffect(() => {
-    if (!settingsLoaded) {
-      fetchSiteSettings();
-    }
-  }, []);
-
-  const fetchSiteSettings = async () => {
+  const fetchSiteSettings = useCallback(async () => {
     try {
       const data = await api.getSettings();
       setSettingsRegistrationOpen(data.registration_open !== 'false');
@@ -83,7 +77,14 @@ export default function AdminSettings() {
     } catch (e) {
       console.error('Failed to fetch site settings:', e);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchSiteSettings();
+    }
+  }, [fetchSiteSettings, settingsLoaded]);
 
   const handleSaveSettings = async () => {
     setSettingsSaving(true);

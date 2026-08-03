@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -57,11 +57,7 @@ export default function Discussions() {
   const captchaRef = useRef<CaptchaHandle>(null);
   useDocumentTitle(t('discussions.title'));
 
-  useEffect(() => {
-    fetchDiscussions();
-  }, [categoryFilter, sortBy, page, problemId]);
-
-  const fetchDiscussions = async () => {
+  const fetchDiscussions = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
@@ -85,7 +81,12 @@ export default function Discussions() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, sortBy, categoryFilter, problemId]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchDiscussions();
+  }, [fetchDiscussions]);
 
   const handleCreateDiscussion = async () => {
     if (!formTitle.trim() || !formContent.trim() || submitting) return;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { useSettingsStore } from '../store/settings';
@@ -22,13 +22,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const config = useSiteConfig();
 
-  // Site settings from cached settings store
+  // Site settings from cached settings store (derived values)
   const getRegistrationOpen = useSettingsStore((s) => s.getRegistrationOpen);
   const getEmailRequired = useSettingsStore((s) => s.getEmailRequired);
   const getEmailSuffixes = useSettingsStore((s) => s.getEmailSuffixes);
-  const [registrationOpen, setRegistrationOpen] = useState(true);
-  const [emailRequired, setEmailRequired] = useState(false);
-  const [emailSuffixes, setEmailSuffixes] = useState('');
+  const registrationOpen = getRegistrationOpen();
+  const emailRequired = getEmailRequired();
+  const emailSuffixes = getEmailSuffixes();
   const [agreed, setAgreed] = useState(false);
   const [captchaUuid, setCaptchaUuid] = useState('');
   const [captchaPng, setCaptchaPng] = useState('');
@@ -43,18 +43,8 @@ export default function Login() {
   const [codeCountdown, setCodeCountdown] = useState(0);
   const codeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    setRegistrationOpen(getRegistrationOpen());
-    setEmailRequired(getEmailRequired());
-    setEmailSuffixes(getEmailSuffixes());
-  }, []);
-
-  // Fetch captcha on mount and when switching mode
-  useEffect(() => {
-    fetchCaptcha();
-  }, [mode]);
-
-  const fetchCaptcha = async () => {
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  const fetchCaptcha = useCallback(async () => {
     try {
       const data = await api.getCaptcha();
       setCaptchaUuid(data.uuid);
@@ -65,7 +55,13 @@ export default function Login() {
     } catch {
       // captcha unavailable, proceed without
     }
-  };
+  }, []);
+
+  // Fetch captcha on mount and when switching mode
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchCaptcha();
+  }, [fetchCaptcha, mode]);
 
   // Cleanup countdown timer on unmount
   useEffect(() => {

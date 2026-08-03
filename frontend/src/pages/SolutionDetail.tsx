@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -33,13 +33,7 @@ export default function SolutionDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    if (!id) return;
-    fetchSolution();
-  }, [id]);
-
-  const fetchSolution = async () => {
-    setLoading(true);
+  const fetchSolution = useCallback(async () => {
     try {
       const data = await api.getSolution(Number(id));
       setSolution(data.solution);
@@ -50,7 +44,13 @@ export default function SolutionDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, addToast]);
+
+  useEffect(() => {
+    if (!id) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchSolution();
+  }, [id, fetchSolution]);
 
   const handleVote = async () => {
     if (!user || voting) return;
@@ -97,6 +97,7 @@ export default function SolutionDetail() {
       });
       addToast('success', t('common.success'));
       setEditing(false);
+      setLoading(true);
       fetchSolution();
     } catch (e: any) {
       console.error('Failed to update solution:', e);

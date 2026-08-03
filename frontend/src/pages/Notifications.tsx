@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -32,11 +32,7 @@ export default function Notifications() {
   const addToast = useToastStore((s) => s.addToast);
   useDocumentTitle(t('notifications.title'));
 
-  useEffect(() => {
-    fetchNotifications();
-  }, [page, type]);
-
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getNotifications({
@@ -51,7 +47,12 @@ export default function Notifications() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, type, addToast]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchNotifications();
+  }, [fetchNotifications]);
 
   const handleItemClick = async (n: any) => {
     if (!n.is_read) {

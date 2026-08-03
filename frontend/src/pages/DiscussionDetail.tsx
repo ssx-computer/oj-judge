@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
@@ -45,12 +45,7 @@ export default function DiscussionDetail() {
 
   const replyEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!id) return;
-    fetchDiscussion();
-  }, [id]);
-
-  const fetchDiscussion = async () => {
+  const fetchDiscussion = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getDiscussion(Number(id));
@@ -62,7 +57,13 @@ export default function DiscussionDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, addToast]);
+
+  useEffect(() => {
+    if (!id) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchDiscussion();
+  }, [id, fetchDiscussion]);
 
   const handleReply = async () => {
     if (!id || !replyContent.trim() || submitting) return;
