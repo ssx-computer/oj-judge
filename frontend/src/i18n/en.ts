@@ -739,6 +739,7 @@ const en: Translations = {
     runtime_error: 'Runtime Error',
     compile_error: 'Compile Error',
     system_error: 'System Error',
+    security_blocked: 'Dangerous Code',
   },
   // Contests
   contests: {

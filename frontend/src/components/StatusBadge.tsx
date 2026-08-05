@@ -10,6 +10,7 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   runtime_error: { label: t('status.runtime_error'), className: 'badge badge-error' },
   compile_error: { label: t('status.compile_error'), className: 'badge badge-error' },
   system_error: { label: t('status.system_error'), className: 'badge badge-error' },
+  security_blocked: { label: t('status.security_blocked'), className: 'badge badge-error' },
 };
 
 export default function StatusBadge({ status }: { status: string }) {

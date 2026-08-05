@@ -8,11 +8,12 @@ on:
 jobs:
   judge:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
 
       - name: Extract submission info
         id: info
@@ -51,70 +52,69 @@ jobs:
             echo "ERROR: No submission ID found"
             exit 1
           fi
+          # Store judge data OUTSIDE the workspace: the sandbox container never
+          # mounts $HOME, so untrusted code can never read the testcases file.
+          mkdir -p "$HOME/judge_meta"
           RESPONSE=$(curl -s --max-time 10 --retry 3 -H "Authorization: Bearer $CALLBACK_SECRET" \
             "${WORKER_API}/api/v1/internal/judge-data?submission_id=${SUBMISSION_ID}")
-          echo "$RESPONSE" > judge_data.json
+          echo "$RESPONSE" > "$HOME/judge_meta/judge_data.json"
           echo "Fetched judge data for submission $SUBMISSION_ID"
+          # GitHub Actions `env:` does NOT expand shell variables ($HOME stays
+          # literal), so export the resolved path via GITHUB_ENV instead.
+          echo "JUDGE_DATA_PATH=$HOME/judge_meta/judge_data.json" >> "$GITHUB_ENV"
 
-      - name: Extract SPJ language
-        id: spj_info
+      # The sandbox image is built ONCE and cached at repo level (Actions
+      # cache). On cache hit we just `docker load` the saved image — no Docker
+      # Hub pull, no rebuild. Keyed on the Dockerfile so a toolchain change
+      # invalidates the cache automatically.
+      - name: Restore sandbox image cache
+        id: sandbox-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/sandbox-image
+          key: sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
+
+      - name: Load or build sandbox image
         run: |
-          SPJ_LANGUAGE=$(python3 -c "import json; d=json.load(open('judge_data.json')); inner=d.get('data',d); print(inner.get('problem',{}).get('spj_language',''))")
-          echo "spj_language=$SPJ_LANGUAGE" >> $GITHUB_OUTPUT
-          echo "Detected SPJ language: $SPJ_LANGUAGE"
-
-      - name: Setup language runtimes
-        run: |
-          LANGUAGE="${{ steps.info.outputs.language }}"
-          SPJ_LANGUAGE="${{ steps.spj_info.outputs.spj_language }}"
-
-          install_language() {
-            local lang="$1"
-            case "$lang" in
-              python)
-                python3 --version
-                ;;
-              cpp)
-                sudo apt-get update -o Acquire::LockTimeout=30 -o APT::Install-Suggests=0
-                sudo apt-get install -y g++
-                ;;
-              java)
-                sudo apt-get update -o Acquire::LockTimeout=30
-                sudo apt-get install -y default-jdk
-                ;;
-              javascript)
-                node --version
-                ;;
-              c)
-                sudo apt-get update -o Acquire::LockTimeout=30
-                sudo apt-get install -y gcc
-                ;;
-              go)
-                sudo apt-get update -o Acquire::LockTimeout=30
-                sudo apt-get install -y golang-go
-                ;;
-              rust)
-                curl --connect-timeout 10 --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                source "$HOME/.cargo/env"
-                ;;
-            esac
-          }
-
-          install_language "$LANGUAGE"
-          if [ -n "$SPJ_LANGUAGE" ] && [ "$SPJ_LANGUAGE" != "$LANGUAGE" ]; then
-            install_language "$SPJ_LANGUAGE"
+          set -euo pipefail
+          if [ -f /tmp/sandbox-image/sandbox.tar ]; then
+            echo "Sandbox image restored from cache, loading..."
+            sudo docker load -i /tmp/sandbox-image/sandbox.tar
+          else
+            echo "Cache miss, building sandbox image (first run)..."
+            sudo docker build -t sandbox:latest -f docker/sandbox.Dockerfile docker/
+            mkdir -p /tmp/sandbox-image
+            # `docker save -o` writes the file as root (docker daemon), and the
+            # Actions cache save step (runner user) then cannot read it ->
+            # "Permission denied". Stream to stdout instead so the file is
+            # owned by the runner user; chmod as a defensive fallback.
+            sudo docker save sandbox:latest > /tmp/sandbox-image/sandbox.tar
+            chmod 666 /tmp/sandbox-image/sandbox.tar 2>/dev/null || true
           fi
 
-      - name: Compile and Judge
+      - name: Save sandbox image cache
+        if: steps.sandbox-cache-restore.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/sandbox-image
+          key: sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
+
+      - name: Compile and Judge (sandboxed)
         id: judge
         run: |
-          chmod +x scripts/judge.sh
-          ulimit -t 5
+          chmod +x scripts/judge.sh scripts/check_security.py
           bash scripts/judge.sh
         env:
           SUBMISSION_ID: ${{ steps.info.outputs.submission_id }}
           LANGUAGE: ${{ steps.info.outputs.language }}
           SOURCE_FILE: ${{ steps.info.outputs.file }}
+          JUDGE_DATA: ${{ env.JUDGE_DATA_PATH }}
+          # SECURITY_SCAN=1 (default): the static scan blocks dangerous calls
+          # and reports the submission as security_blocked ("dangerous code")
+          # instead of judging it. The container sandbox remains the real
+          # security boundary either way (blacklists are bypassable).
+          SECURITY_SCAN: "1"
 
       - name: Callback result
         if: always()

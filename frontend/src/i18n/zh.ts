@@ -759,6 +759,7 @@ const zh = {
     runtime_error: '运行错误',
     compile_error: '编译错误',
     system_error: '系统错误',
+    security_blocked: '危险指令',
   },
   // Contests
   contests: {
