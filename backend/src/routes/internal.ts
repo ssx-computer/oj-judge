@@ -25,6 +25,7 @@ internal.post('/callback', async (c) => {
   const validStatuses = [
     'accepted', 'wrong_answer', 'time_limit_exceeded',
     'memory_limit_exceeded', 'runtime_error', 'compile_error', 'system_error',
+    'security_blocked',
   ];
 
   if (!validStatuses.includes(status)) {

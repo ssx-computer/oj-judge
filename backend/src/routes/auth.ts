@@ -485,6 +485,15 @@ auth.post('/send-verification-code', createRateLimiter('sendVerificationCode', 3
     return c.json({ success: false, error: { message: 'Email already registered', code: 'CONFLICT' } }, 409);
   }
 
+  // Email-bomb guard: the IP rate limiter above can be rotated, so also refuse
+  // to regenerate a code for the SAME email within the cooldown window.
+  const recent: any = await c.env.DB.prepare(
+    'SELECT id FROM email_verification_codes WHERE email = ? AND expires_at > ?'
+  ).bind(email, new Date(Date.now() + 60 * 1000).toISOString()).first();
+  if (recent) {
+    return c.json({ success: false, error: { message: 'Verification code already sent, please wait before requesting another', code: 'RATE_LIMITED' } }, 429);
+  }
+
   // Delete old verification codes for this email
   await c.env.DB.prepare('DELETE FROM email_verification_codes WHERE email = ?').bind(email).run();
 
