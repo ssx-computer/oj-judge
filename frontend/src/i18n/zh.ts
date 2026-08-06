@@ -685,6 +685,8 @@ const zh = {
     emailSuffixes: '邮箱后缀限制',
     emailSuffixesHint: '允许的邮箱后缀，逗号分隔，如 @example.com,@school.edu。留空表示不限制',
     emailSuffixesPlaceholder: '@example.com,@school.edu',
+    actionTimeout: '评测最大运行时间（秒）',
+    actionTimeoutHint: '单个评测 Action 的硬性运行上限，超时自动停止并回报系统错误。默认 300 秒',
     settingsSaved: '设置已保存',
     uploadManagement: '文件管理',
     uploadAdmin: '上传管理',

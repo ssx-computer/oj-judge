@@ -666,6 +666,8 @@ const en: Translations = {
     emailSuffixes: 'Email Suffix Restrictions',
     emailSuffixesHint: 'Allowed email suffixes, comma-separated, e.g. @example.com,@school.edu. Leave empty for no restriction',
     emailSuffixesPlaceholder: '@example.com,@school.edu',
+    actionTimeout: 'Max judging runtime (seconds)',
+    actionTimeoutHint: 'Hard cap for a single judging action; when exceeded the action is stopped and a system error is reported. Default 300 seconds',
     settingsSaved: 'Settings saved',
     uploadManagement: 'File Management',
     uploadAdmin: 'Upload Admin',

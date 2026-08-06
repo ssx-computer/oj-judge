@@ -177,10 +177,17 @@ internal.get('/judge-data', async (c) => {
     return c.json({ success: false, error: { message: 'Invalid testcase format in judge repository', code: 'INTERNAL_ERROR' } }, 500);
   }
 
+  // Admin-configurable hard cap for the whole judging action (seconds).
+  // The judge runner enforces it as the outer timeout; when exceeded the
+  // action is killed and a system_error is reported.
+  const timeoutRow: any = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'action_timeout'").first();
+  const actionTimeout = parseInt((timeoutRow?.value as string) || '') || 300;
+
   const responseData: any = {
     submission,
     testcases,
     problem,
+    action_timeout: actionTimeout,
   };
 
   // Include SPJ code if judge_type is 'spj'

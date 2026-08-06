@@ -13,6 +13,7 @@ export default function AdminSettings() {
   const [settingsRegistrationOpen, setSettingsRegistrationOpen] = useState(true);
   const [settingsEmailRequired, setSettingsEmailRequired] = useState(false);
   const [settingsEmailSuffixes, setSettingsEmailSuffixes] = useState('');
+  const [settingsActionTimeout, setSettingsActionTimeout] = useState('300');
   const [settingsUploadEnabled, setSettingsUploadEnabled] = useState(true);
   const [settingsImageUploadEnabled, setSettingsImageUploadEnabled] = useState(true);
   const [settingsAIEnabled, setSettingsAIEnabled] = useState(false);
@@ -49,6 +50,7 @@ export default function AdminSettings() {
       setSettingsRegistrationOpen(data.registration_open !== 'false');
       setSettingsEmailRequired(data.email_required === 'true');
       setSettingsEmailSuffixes(data.email_suffixes || '');
+      setSettingsActionTimeout(data.action_timeout || '300');
       setSettingsUploadEnabled(data.upload_enabled !== 'false');
       setSettingsImageUploadEnabled(data.image_upload_enabled !== 'false');
       setSettingsAIEnabled(data.ai_enabled === 'true');
@@ -93,6 +95,7 @@ export default function AdminSettings() {
         registration_open: String(settingsRegistrationOpen),
         email_required: String(settingsEmailRequired),
         email_suffixes: settingsEmailSuffixes,
+        action_timeout: settingsActionTimeout,
         upload_enabled: String(settingsUploadEnabled),
         image_upload_enabled: String(settingsImageUploadEnabled),
         ai_enabled: String(settingsAIEnabled),
@@ -169,6 +172,21 @@ export default function AdminSettings() {
         />
         <p style={{fontSize:'13px',color:'var(--text-secondary)',marginTop:'4px'}}>
           {t('admin.emailSuffixesHint')}
+        </p>
+      </div>
+
+      <div className="form-group">
+        <label>{t('admin.actionTimeout')}</label>
+        <input
+          type="number"
+          min={10}
+          max={3600}
+          value={settingsActionTimeout}
+          onChange={(e) => setSettingsActionTimeout(e.target.value)}
+          placeholder="300"
+        />
+        <p style={{fontSize:'13px',color:'var(--text-secondary)',marginTop:'4px'}}>
+          {t('admin.actionTimeoutHint')}
         </p>
       </div>
 
