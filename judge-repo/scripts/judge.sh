@@ -1,44 +1,65 @@
 #!/bin/bash
-# Sandboxed judge main controller (runs on the GitHub Actions runner host).
+# EOJ Sandboxed Judge Controller (nsjail edition)
 #
-# Security model — untrusted user code NEVER runs on the host. There is NO
-# static code scanning: every submission (compile + run) executes inside a
-# hardened Docker container and is stopped by hard limits:
-#   1. --network none            -> no network access (can't exfiltrate/leech,
-#      can't link external resources during compile)
-#   2. --memory / --cpus / --pids-limit
-#                               -> cgroup hard limits (memory, CPU, fork bomb)
-#   3. --cap-drop ALL --no-new-privileges --user 65534
-#                               -> no privileges, no /dev access, can't escape
-#   4. --read-only + tmpfs       -> can't touch the host filesystem
-#   5. Judge data (testcases) is parsed on the HOST; only test INPUT files are
-#      mounted into the container (read-only). Expected outputs NEVER enter the
-#      container — comparison happens on the host after the container exits.
-#   6. Per-case wall-clock kill via `timeout -s KILL` inside the container plus
-#      an outer timeout (`action_timeout`, default 300s) on `docker run` itself.
+# Security model — untrusted user code NEVER runs bare-metal on the host.
+# Every submission (compile + run) executes inside a hardened nsjail sandbox:
+# 1. Linux namespaces (pid, net, mount, ipc, uts, user)  → full isolation
+# 2. seccomp-bpf WHITELIST (DEFAULT TRAP)                → any non-whitelisted
+#    syscall triggers SIGSYS (exit 159), reported as dangerous_operation.
+#    IMMUNE to string concatenation / macro obfuscation.
+# 3. cgroup v2 hard limits (memory, CPU, PIDs)           → OOM / fork-bomb protection
+# 4. rlimit extra guards (address space, file size, nproc)
+# 5. read-only system bind-mounts + writable box/tmp     → FS containment
+# 6. User 65534 (nobody) inside the sandbox              → zero privileges
+# 7. No network devices / blocked net syscalls           → air-gapped
 #
-# Output contract: writes result.json to CWD (same as the legacy judge.sh),
-# consumed by .github/workflows/judge.yml -> /api/v1/internal/callback
+# BACKEND COMPATIBILITY:
+# The backend (internal.ts) only accepts these statuses:
+#   accepted, wrong_answer, time_limit_exceeded, memory_limit_exceeded,
+#   runtime_error, compile_error, system_error, security_blocked
+# Any other status causes a 400 Bad Request.
+# Therefore we map:
+#   dangerous_operation  → security_blocked  (backend supports this)
+#   output_limit_exceeded → wrong_answer     (backend does NOT support this)
+# The REAL status is preserved in:
+#   - testcase detail message (visible to user in frontend)
+#   - judge logs (stored in judge_logs table via the logs field)
+#   - stdout of this script (visible in GitHub Actions logs)
+#
+# Output contract: writes result.json to CWD.
 set -u
 
-# Python interpreter: prefer python3 (Linux runners), fall back to `python`.
-# Probe by actually running it — some environments ship a broken python3 stub.
 PY="python3"
 if ! "$PY" -c "print(1)" >/dev/null 2>&1; then
-  PY="python"
+    PY="python"
 fi
 
 SUBMISSION_ID="${SUBMISSION_ID:-}"
 LANGUAGE="${LANGUAGE:-}"
 SOURCE_FILE="${SOURCE_FILE:-}"
 JUDGE_DATA="${JUDGE_DATA:-judge_data.json}"
-# Expand a literal $HOME if the caller passed the path verbatim (GitHub
-# Actions `env:` does NOT expand shell variables).
 JUDGE_DATA="${JUDGE_DATA//\$HOME/$HOME}"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+NSJAIL_COMPILE_CFG="$REPO_ROOT/config/nsjail_compile.cfg"
+NSJAIL_RUN_CFG="$REPO_ROOT/config/nsjail_run.cfg"
+
+NSJAIL_BIN=$(command -v nsjail)
+if [ -z "$NSJAIL_BIN" ]; then
+    echo '{"submission_id":"'"$SUBMISSION_ID"'","status":"system_error","details":[{"status":"system_error","message":"nsjail binary not found in PATH"}]}' > result.json
+    exit 0
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 # ---------------- helpers ----------------
-json_get() { # python expression on `inner` (the unwrapped data object)
-  "$PY" -c "
+json_get() {
+    "$PY" -c "
 import json,sys
 d=json.load(open('$JUDGE_DATA'))
 inner=d.get('data',d)
@@ -46,46 +67,41 @@ print($1)
 " 2>/dev/null
 }
 
-fail_json() { # status message
-  "$PY" - "$SUBMISSION_ID" "$1" "$2" <<'PY'
+fail_json() {
+    "$PY" - "$SUBMISSION_ID" "$1" "$2" <<'PY'
 import json, sys
 sid, status, msg = sys.argv[1], sys.argv[2], sys.argv[3]
 print(json.dumps({"submission_id": sid, "status": status,
-                  "details": [{"status": status, "message": msg}]}, ensure_ascii=False))
+ "details": [{"status": status, "message": msg}]}, ensure_ascii=False))
 PY
 }
 
-# ---------------- parse judge data (host side only) ----------------
+# ---------------- parse judge data ----------------
 TIME_LIMIT=$(json_get "inner.get('problem',{}).get('time_limit',1000)")
 MEMORY_LIMIT=$(json_get "inner.get('problem',{}).get('memory_limit',256)")
 N_CASES=$(json_get "len(inner.get('testcases',[]))")
 JUDGE_TYPE=$(json_get "inner.get('problem',{}).get('judge_type','default')")
 SPJ_LANG=$(json_get "inner.get('problem',{}).get('spj_language','')")
-SPJ_CODE=$(json_get "inner.get('spj_code','')")
-
-# Fail fast if judge data could not be parsed (missing file, API error, ...)
-if [ -z "$TIME_LIMIT" ] || [ -z "$MEMORY_LIMIT" ] || [ -z "$N_CASES" ]; then
-  fail_json system_error "Failed to parse judge data from $JUDGE_DATA" > result.json
-  exit 0
-fi
-
-# Hard cap for the WHOLE judging action (compile + all test cases), in
-# seconds. The admin can configure it via the site setting `action_timeout`
-# (default 300); judge-data returns it as `action_timeout`. Beyond this the
-# action is killed and system_error is reported.
+SPJ_CODE=$(json_get "inner.get('problem',{}).get('spj_code','')")
 ACTION_TIMEOUT=$(json_get "inner.get('action_timeout', 300)")
+
 if ! [ "$ACTION_TIMEOUT" -ge 1 ] 2>/dev/null; then
-  ACTION_TIMEOUT=300
+    ACTION_TIMEOUT=300
 fi
 
-echo "Judge config: time_limit=${TIME_LIMIT}ms, memory_limit=${MEMORY_LIMIT}MB, testcases=${N_CASES}, judge_type=${JUDGE_TYPE}"
-echo "Submission: id=${SUBMISSION_ID}, language=${LANGUAGE}, file=${SOURCE_FILE}"
+echo "[JUDGE] Config: time_limit=${TIME_LIMIT}ms, memory_limit=${MEMORY_LIMIT}MB, testcases=${N_CASES}, judge_type=${JUDGE_TYPE}"
+echo "[JUDGE] Submission: id=${SUBMISSION_ID}, language=${LANGUAGE}, file=${SOURCE_FILE}"
 
-# ---------------- 1. prepare sandbox workdir ----------------
+if [ -z "$TIME_LIMIT" ] || [ -z "$MEMORY_LIMIT" ] || [ -z "$N_CASES" ]; then
+    fail_json system_error "Failed to parse judge data from $JUDGE_DATA" > result.json
+    exit 0
+fi
+
+# ---------------- prepare workdir ----------------
 WORK_DIR="/tmp/judge_${SUBMISSION_ID}"
 rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR/box" "$WORK_DIR/inputs" "$WORK_DIR/outputs" "$WORK_DIR/expected" "$WORK_DIR/cases"
-chmod 777 "$WORK_DIR/box" "$WORK_DIR/outputs" "$WORK_DIR/cases"
+mkdir -p "$WORK_DIR/box" "$WORK_DIR/inputs" "$WORK_DIR/outputs" "$WORK_DIR/expected" "$WORK_DIR/cases" "$WORK_DIR/tmp"
+chmod 777 "$WORK_DIR/box" "$WORK_DIR/outputs" "$WORK_DIR/cases" "$WORK_DIR/tmp"
 chmod 755 "$WORK_DIR/inputs" "$WORK_DIR/expected"
 
 SOURCE_EXT="${SOURCE_FILE##*.}"
@@ -93,327 +109,631 @@ SOURCE_EXT="${SOURCE_FILE##*.}"
 SOURCE_FILENAME="solution${SOURCE_EXT:+.$SOURCE_EXT}"
 cp "$SOURCE_FILE" "$WORK_DIR/box/$SOURCE_FILENAME"
 
-# Inputs are mounted read-only into the container; expected stays on the host.
 for i in $(seq 0 $((N_CASES - 1))); do
-  json_get "inner['testcases'][$i]['input']" > "$WORK_DIR/inputs/$i.txt"
-  json_get "inner['testcases'][$i]['expected_output']" > "$WORK_DIR/expected/$i.txt"
+    json_get "inner['testcases'][$i]['input']" > "$WORK_DIR/inputs/$i.txt"
+    json_get "inner['testcases'][$i]['expected_output']" > "$WORK_DIR/expected/$i.txt"
 done
 chmod -R a+r "$WORK_DIR/inputs"
 
-# ---------------- 3. compile/run command + sandbox image per language ----------------
+# ---------------- language-specific commands ----------------
 COMPILE_CMD=""
-RUN_CMD=""
-IMAGE=""
+RUN_ARGS=()
 case "$LANGUAGE" in
-  python)
-    IMAGE="python:3.12-slim"
-    RUN_CMD=""$PY" -B /box/$SOURCE_FILENAME"
-    ;;
-  cpp)
-    IMAGE="sandbox:latest"
-    COMPILE_CMD="g++ -std=c++17 -O2 -o /box/solution_bin /box/$SOURCE_FILENAME"
-    RUN_CMD="/box/solution_bin"
-    ;;
-  java)
-    IMAGE="eclipse-temurin:21-jdk"
-    cp "$SOURCE_FILE" "$WORK_DIR/box/Main.java"
-    COMPILE_CMD="javac /box/Main.java"
-    RUN_CMD="java -cp /box Main"
-    ;;
-  javascript)
-    IMAGE="node:22-bookworm-slim"
-    RUN_CMD="node /box/$SOURCE_FILENAME"
-    ;;
-  c)
-    IMAGE="sandbox:latest"
-    COMPILE_CMD="gcc -std=c11 -O2 -o /box/solution_bin /box/$SOURCE_FILENAME"
-    RUN_CMD="/box/solution_bin"
-    ;;
-  go)
-    IMAGE="golang:1.24-bookworm"
-    cp "$SOURCE_FILE" "$WORK_DIR/box/main.go"
-    COMPILE_CMD="GOCACHE=/tmp/gocache GOFLAGS=-buildvcs=false go build -o /box/solution_bin /box/main.go"
-    RUN_CMD="/box/solution_bin"
-    ;;
-  rust)
-    IMAGE="rust:1-bookworm"
-    cp "$SOURCE_FILE" "$WORK_DIR/box/main.rs"
-    COMPILE_CMD="rustc -O -o /box/solution_bin /box/main.rs"
-    RUN_CMD="/box/solution_bin"
-    ;;
-  *)
-    echo "{\"submission_id\": \"$SUBMISSION_ID\", \"status\": \"system_error\", \"details\": [{\"status\": \"system_error\", \"message\": \"Unsupported language: $LANGUAGE\"}]}" > result.json
-    exit 0
-    ;;
+    python)
+        COMPILE_CMD=""
+        RUN_ARGS=(python3 -B "/box/$SOURCE_FILENAME")
+        ;;
+    cpp)
+        COMPILE_CMD="g++ -std=c++17 -O2 -o /box/solution_bin /box/$SOURCE_FILENAME"
+        RUN_ARGS=("/box/solution_bin")
+        ;;
+    java)
+        cp "$SOURCE_FILE" "$WORK_DIR/box/Main.java"
+        COMPILE_CMD="javac /box/Main.java"
+        JAVA_HEAP_LIMIT=$((MEMORY_LIMIT - 64))
+        [ "$JAVA_HEAP_LIMIT" -lt 32 ] && JAVA_HEAP_LIMIT=32
+        RUN_ARGS=(java "-Xmx${JAVA_HEAP_LIMIT}m" "-Xms32m" -XX:+UseSerialGC -cp /box Main)
+        ;;
+    javascript)
+        COMPILE_CMD=""
+        RUN_ARGS=(node "/box/$SOURCE_FILENAME")
+        ;;
+    c)
+        COMPILE_CMD="gcc -std=c11 -O2 -o /box/solution_bin /box/$SOURCE_FILENAME"
+        RUN_ARGS=("/box/solution_bin")
+        ;;
+    go)
+        cp "$SOURCE_FILE" "$WORK_DIR/box/main.go"
+        COMPILE_CMD="GOCACHE=/tmp/gocache GOFLAGS=-buildvcs=false go build -o /box/solution_bin /box/main.go"
+        RUN_ARGS=("/box/solution_bin")
+        ;;
+    rust)
+        cp "$SOURCE_FILE" "$WORK_DIR/box/main.rs"
+        COMPILE_CMD="rustc -O -o /box/solution_bin /box/main.rs"
+        RUN_ARGS=("/box/solution_bin")
+        ;;
+    *)
+        fail_json system_error "Unsupported language: $LANGUAGE" > result.json
+        exit 0
+        ;;
 esac
 
-TL_SEC=$("$PY" -c "print(int($TIME_LIMIT / 1000) + 1)")
-COMPILE_TIMEOUT="${COMPILE_TIMEOUT:-60}"   # seconds, capped for the compile phase
-MEM_MB=$((MEMORY_LIMIT + 512))   # headroom for the compiler; runtime is capped by ulimit + cgroup
+TL_SEC=$((TIME_LIMIT / 1000 + 1))
+COMPILE_TIMEOUT="${COMPILE_TIMEOUT:-60}"
+COMPILE_MEM_MB=$((MEMORY_LIMIT + 512))
+MAX_OUTPUT_BYTES=65536
 
-cp scripts/run_inner.sh "$WORK_DIR/box/run_inner.sh"
-chmod +x "$WORK_DIR/box/run_inner.sh"
+# ---------------- compile phase ----------------
+if [ -n "$COMPILE_CMD" ]; then
+    echo "[JUDGE] Compiling: $COMPILE_CMD"
 
-# Local sandbox image (built/cached by the workflow) takes priority; languages
-# still on upstream images fall back to pulling.
-if ! sudo docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "Pulling sandbox image: $IMAGE"
-  if ! sudo docker pull -q "$IMAGE" > /dev/null 2>&1; then
-    fail_json system_error "Failed to prepare sandbox image $IMAGE" > result.json
-    exit 0
-  fi
-else
-  echo "Sandbox image $IMAGE already present locally"
+    COMPILE_START=$(date +%s%N)
+
+    $SUDO "$NSJAIL_BIN" \
+        --quiet \
+        --config "$NSJAIL_COMPILE_CFG" \
+        --bindmount "$WORK_DIR/box:/box:rw" \
+        --bindmount "$WORK_DIR/tmp:/tmp:rw" \
+        --bindmount "$WORK_DIR/outputs:/outputs:rw" \
+        --rlimit_as ${COMPILE_MEM_MB} \
+        --rlimit_cpu ${COMPILE_TIMEOUT} \
+        --rlimit_nofile 128 \
+        --rlimit_nproc 128 \
+        --rlimit_fsize 1048576 \
+        --time_limit ${COMPILE_TIMEOUT} \
+        --cgroup_mem_max $((COMPILE_MEM_MB * 1024 * 1024)) \
+        --cgroup_pids_max 128 \
+        --cgroup_cpu_ms_per_sec 2000 \
+        --max_cpus 2 \
+        -- \
+        bash -c "$COMPILE_CMD" \
+        > "$WORK_DIR/outputs/compile_out.txt" 2>&1
+
+    COMPILE_RC=$?
+    COMPILE_END=$(date +%s%N)
+    COMPILE_MS=$(( (COMPILE_END - COMPILE_START) / 1000000 ))
+
+    if [ $COMPILE_RC -ne 0 ]; then
+        echo "[JUDGE] Compile failed with rc=$COMPILE_RC, ${COMPILE_MS}ms"
+        if [ $COMPILE_RC -eq 159 ]; then
+            # dangerous_operation during compile → security_blocked
+            echo "[JUDGE] REAL STATUS: dangerous_operation (forbidden syscall during compilation)"
+            fail_json security_blocked "Compilation blocked: forbidden system call detected (security violation). Macro expansion and string concatenation cannot bypass kernel-level seccomp filtering." > result.json
+        elif [ $COMPILE_RC -eq 137 ] || [ $COMPILE_RC -eq 9 ]; then
+            if [ "$COMPILE_MS" -ge "$((COMPILE_TIMEOUT * 1000 * 90 / 100))" ]; then
+                fail_json compile_error "Compilation time limit exceeded (${COMPILE_TIMEOUT}s)" > result.json
+            else
+                fail_json compile_error "Compilation killed (possibly out of memory)" > result.json
+            fi
+        else
+            COMPILE_ERR=$(head -c 2000 "$WORK_DIR/outputs/compile_out.txt")
+            echo "{\"submission_id\":\"$SUBMISSION_ID\",\"status\":\"compile_error\",\"details\":[{\"status\":\"compile_error\",\"message\":$(echo "$COMPILE_ERR" | "$PY" -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}]}" > result.json
+        fi
+        exit 0
+    fi
+    echo "[JUDGE] Compilation OK (${COMPILE_MS}ms)"
 fi
 
-TOTAL_TIMEOUT=$ACTION_TIMEOUT   # hard cap for the whole judging action
-echo "Running submission in hardened container ($IMAGE), total budget ${TOTAL_TIMEOUT}s"
-timeout -s KILL "$TOTAL_TIMEOUT" sudo docker run --rm \
-  --network none \
-  --memory "${MEM_MB}m" --memory-swap "${MEM_MB}m" \
-  --cpus 1 \
-  --pids-limit 64 \
-  --cap-drop ALL \
-  --security-opt no-new-privileges \
-  --user 65534:65534 \
-  --read-only \
-  --tmpfs /tmp:rw,size=128m \
-  --tmpfs /dev/shm:rw,size=64m \
-  -v "$WORK_DIR/box:/box" \
-  -v "$WORK_DIR/inputs:/inputs:ro" \
-  -v "$WORK_DIR/outputs:/outputs" \
-  -w /box \
-  "$IMAGE" \
-  bash /box/run_inner.sh "$LANGUAGE" "$COMPILE_CMD" "$RUN_CMD" "$N_CASES" "$TL_SEC" "$((MEMORY_LIMIT * 1024))" "$COMPILE_TIMEOUT" \
-  > "$WORK_DIR/container.log" 2>&1
-RUN_RC=$?
-
-if [ $RUN_RC -ne 0 ]; then
-  if [ -f "$WORK_DIR/outputs/compile_error.txt" ]; then
-    COMPILE_ERR=$(head -c 2000 "$WORK_DIR/outputs/compile_error.txt")
-    echo "{\"submission_id\":\"$SUBMISSION_ID\",\"status\":\"compile_error\",\"details\":[{\"status\":\"compile_error\",\"message\":$(echo "$COMPILE_ERR" | "$PY" -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}]}" > result.json
-  elif [ $RUN_RC -eq 124 ]; then
-    fail_json system_error "Judging exceeded the configured max runtime (${ACTION_TIMEOUT}s) and was stopped" > result.json
-  else
-    LOG_TAIL=$(tail -c 500 "$WORK_DIR/container.log" | tr '\n' ' ')
-    fail_json system_error "Sandbox execution failed (exit $RUN_RC): $LOG_TAIL" > result.json
-  fi
-  exit 0
-fi
-
-# ---------------- 4. per-case results ----------------
-META="$WORK_DIR/outputs/meta.json"
-if [ ! -f "$META" ]; then
-  fail_json system_error "Judge produced no per-case metadata" > result.json
-  exit 0
-fi
-
-TOTAL_SCORE=0
-MAX_SCORE=0
-MAX_TIME=0
-MAX_MEMORY=0
-OVERALL_STATUS="accepted"
-DETAILS="["
-
+# ---------------- run test cases ----------------
 for i in $(seq 0 $((N_CASES - 1))); do
-  SCORE=$(json_get "inner['testcases'][$i].get('score',10)")
-  IS_SAMPLE=$(json_get "json.dumps(inner['testcases'][$i].get('is_sample',0))")
-  MAX_SCORE=$((MAX_SCORE + SCORE))
+    SCORE=$(json_get "inner['testcases'][$i].get('score',10)")
+    IS_SAMPLE=$(json_get "json.dumps(inner['testcases'][$i].get('is_sample',0))")
 
-  # read per-case metadata with python (robust against weird chars)
-  META_LINE=$("$PY" -c "
-import json
-meta=json.load(open('$META'))
-print(meta[$i]['exit_code'], meta[$i]['time_ms'], meta[$i].get('memory_kb', 0))
-")
-  EXIT_CODE=$(echo "$META_LINE" | awk '{print $1}')
-  ELAPSED_MS=$(echo "$META_LINE" | awk '{print $2}')
-  MEMORY_KB=$(echo "$META_LINE" | awk '{print $3}')
-  MEMORY_USED=$((MEMORY_KB / 1024))   # KB -> MB
+    echo "[JUDGE] Running testcase $((i+1))/$N_CASES..."
 
-  TC_STATUS=""
-  TC_MESSAGE=""
+    START_NS=$(date +%s%N)
 
-  if [ $ELAPSED_MS -gt $MAX_TIME ]; then MAX_TIME=$ELAPSED_MS; fi
-  if [ $MEMORY_USED -gt $MAX_MEMORY ]; then MAX_MEMORY=$MEMORY_USED; fi
+    $SUDO "$NSJAIL_BIN" \
+        --quiet \
+        --config "$NSJAIL_RUN_CFG" \
+        --bindmount "$WORK_DIR/box:/box:rw" \
+        --bindmount "$WORK_DIR/inputs:/inputs:ro" \
+        --bindmount "$WORK_DIR/outputs:/outputs:rw" \
+        --bindmount "$WORK_DIR/tmp:/tmp:rw" \
+        --rlimit_as $((MEMORY_LIMIT * 2)) \
+        --rlimit_cpu ${TL_SEC} \
+        --rlimit_nofile 32 \
+        --rlimit_nproc 64 \
+        --rlimit_fsize 1048576 \
+        --time_limit ${TL_SEC} \
+        --cgroup_mem_max $((MEMORY_LIMIT * 1024 * 1024)) \
+        --cgroup_pids_max 64 \
+        --cgroup_cpu_ms_per_sec 1000 \
+        --max_cpus 1 \
+        -- \
+        "${RUN_ARGS[@]}" \
+        < "$WORK_DIR/inputs/$i.txt" \
+        > "$WORK_DIR/outputs/$i.txt" \
+        2> "$WORK_DIR/outputs/$i.err" \
+        &
+    NSJAIL_PID=$!
 
-  if [ $EXIT_CODE -eq 124 ]; then
-    TC_STATUS="time_limit_exceeded"
-    TC_MESSAGE="Time limit exceeded (${ELAPSED_MS}ms > ${TIME_LIMIT}ms)"
-    OVERALL_STATUS="time_limit_exceeded"
-  elif [ $EXIT_CODE -eq 137 ]; then
-    TC_STATUS="memory_limit_exceeded"
-    TC_MESSAGE="Memory limit exceeded (cgroup OOM killed the process)"
-    OVERALL_STATUS="memory_limit_exceeded"
-  elif [ $EXIT_CODE -ne 0 ]; then
-    TC_STATUS="runtime_error"
-    ERROR_MSG=$(head -c 500 "$WORK_DIR/outputs/$i.err" 2>/dev/null || echo "Unknown error")
-    TC_MESSAGE="Runtime error (exit code $EXIT_CODE): $ERROR_MSG"
-    OVERALL_STATUS="runtime_error"
-  else
+    # Memory monitor: poll all descendant PIDs via /proc for peak RSS (VmHWM)
+    (
+        MAX_RSS=0
+        while kill -0 "$NSJAIL_PID" 2>/dev/null; do
+            for pid in $(pgrep -P "$NSJAIL_PID" 2>/dev/null); do
+                if [ -f "/proc/$pid/status" ]; then
+                    RSS=$(grep '^VmHWM:' "/proc/$pid/status" 2>/dev/null | awk '{print $2}')
+                    if [ -n "$RSS" ] && [ "$RSS" -gt "$MAX_RSS" ]; then
+                        MAX_RSS=$RSS
+                    fi
+                fi
+            done
+            sleep 0.05
+        done
+        echo "$MAX_RSS" > "$WORK_DIR/outputs/$i.mem"
+    ) &
+    MONITOR_PID=$!
+
+    wait "$NSJAIL_PID"
+    RC=$?
+    wait "$MONITOR_PID" 2>/dev/null
+
+    END_NS=$(date +%s%N)
+    ELAPSED_MS=$(( (END_NS - START_NS) / 1000000 ))
+
+    MEMORY_KB=$(cat "$WORK_DIR/outputs/$i.mem" 2>/dev/null || echo 0)
+    MEMORY_USED=$((MEMORY_KB / 1024))
+
+    TC_STATUS=""
+    TC_MESSAGE=""
+    TC_SCORE=0
+
+    # Exit-code → verdict mapping
+    case $RC in
+        0)
+            TC_STATUS="pending"
+            ;;
+        137|9)
+            if [ "$ELAPSED_MS" -ge "$((TIME_LIMIT * 90 / 100))" ]; then
+                TC_STATUS="time_limit_exceeded"
+                TC_MESSAGE="Time limit exceeded (${ELAPSED_MS}ms > ${TIME_LIMIT}ms)"
+            else
+                TC_STATUS="memory_limit_exceeded"
+                TC_MESSAGE="Memory limit exceeded (cgroup OOM killed the process)"
+            fi
+            ;;
+        134)
+            TC_STATUS="runtime_error"
+            TC_MESSAGE="Aborted (SIGABRT)"
+            ;;
+        139)
+            TC_STATUS="runtime_error"
+            TC_MESSAGE="Segmentation fault (SIGSEGV)"
+            ;;
+        136)
+            TC_STATUS="runtime_error"
+            TC_MESSAGE="Floating point exception (SIGFPE)"
+            ;;
+        132)
+            TC_STATUS="runtime_error"
+            TC_MESSAGE="Illegal instruction (SIGILL)"
+            ;;
+        159)
+            TC_STATUS="dangerous_operation"
+            TC_MESSAGE="Forbidden system call detected (security violation). Your code attempted to invoke a disallowed kernel function (e.g., network access, process creation, or privileged operation). This has been intercepted at the kernel level via seccomp-bpf and cannot be bypassed by string concatenation or macro definitions."
+            ;;
+        1)
+            if [ "$JUDGE_TYPE" = "spj" ]; then
+                TC_STATUS="pending_spj"
+            else
+                TC_STATUS="runtime_error"
+                TC_MESSAGE="Runtime error (exit code 1)"
+            fi
+            ;;
+        *)
+            TC_STATUS="runtime_error"
+            TC_MESSAGE="Runtime error (exit code $RC)"
+            ;;
+    esac
+
+    # If already a definitive non-AC status, record and continue
+    if [ "$TC_STATUS" != "pending" ] && [ "$TC_STATUS" != "pending_spj" ]; then
+        TC_SCORE=0
+        "$PY" - "$WORK_DIR/outputs/meta_$i.json" "$TC_STATUS" "$ELAPSED_MS" "$MEMORY_USED" "$TC_SCORE" "$IS_SAMPLE" "$SCORE" "$TC_MESSAGE" <<'PY'
+import json, sys
+path, status, time_ms, mem_mb, score, is_sample, max_score, msg = sys.argv[1:9]
+meta = {
+    "status": status,
+    "time_used": int(time_ms),
+    "memory_used": int(mem_mb),
+    "score": int(score),
+    "is_sample": int(is_sample),
+    "max_score": int(max_score),
+}
+if msg:
+    meta["message"] = msg
+with open(path, "w") as f:
+    json.dump(meta, f)
+PY
+        echo "[JUDGE] Testcase $((i+1))/$N_CASES: REAL STATUS=$TC_STATUS (${ELAPSED_MS}ms)"
+        continue
+    fi
+
+    # Check output size (OLE)
+    OUTPUT_SIZE=$(stat -c%s "$WORK_DIR/outputs/$i.txt" 2>/dev/null || echo 0)
+    if [ "$OUTPUT_SIZE" -gt "$MAX_OUTPUT_BYTES" ]; then
+        TC_STATUS="output_limit_exceeded"
+        TC_MESSAGE="Output limit exceeded ($OUTPUT_SIZE bytes > $MAX_OUTPUT_BYTES bytes)"
+        TC_SCORE=0
+        head -c $MAX_OUTPUT_BYTES "$WORK_DIR/outputs/$i.txt" > "$WORK_DIR/outputs/$i.txt.tmp"
+        mv "$WORK_DIR/outputs/$i.txt.tmp" "$WORK_DIR/outputs/$i.txt"
+        "$PY" - "$WORK_DIR/outputs/meta_$i.json" "$TC_STATUS" "$ELAPSED_MS" "$MEMORY_USED" "$TC_SCORE" "$IS_SAMPLE" "$SCORE" "$TC_MESSAGE" <<'PY'
+import json, sys
+path, status, time_ms, mem_mb, score, is_sample, max_score, msg = sys.argv[1:9]
+meta = {
+    "status": status,
+    "time_used": int(time_ms),
+    "memory_used": int(mem_mb),
+    "score": int(score),
+    "is_sample": int(is_sample),
+    "max_score": int(max_score),
+}
+if msg:
+    meta["message"] = msg
+with open(path, "w") as f:
+    json.dump(meta, f)
+PY
+        echo "[JUDGE] Testcase $((i+1))/$N_CASES: REAL STATUS=$TC_STATUS (${ELAPSED_MS}ms)"
+        continue
+    fi
+
+    # Normal exit: diff or SPJ
     if [ "$JUDGE_TYPE" = "spj" ]; then
-      TC_STATUS="pending_spj"   # resolved below by the SPJ container
+        TC_STATUS="pending_spj"
+        TC_SCORE=0
     else
-      VERDICT=$("$PY" -c "
+        VERDICT=$("$PY" -c "
 expected = open('$WORK_DIR/expected/$i.txt').read()
 actual = open('$WORK_DIR/outputs/$i.txt').read()
 print('MATCH' if expected.strip() == actual.strip() else 'MISMATCH')
 ")
-      if [ "$VERDICT" = "MATCH" ]; then
-        TC_STATUS="accepted"
-        TOTAL_SCORE=$((TOTAL_SCORE + SCORE))
-      else
-        TC_STATUS="wrong_answer"
-        TC_MESSAGE="Output differs from expected"
-        if [ "$OVERALL_STATUS" = "accepted" ]; then OVERALL_STATUS="wrong_answer"; fi
-      fi
+        if [ "$VERDICT" = "MATCH" ]; then
+            TC_STATUS="accepted"
+            TC_SCORE=$SCORE
+        else
+            TC_STATUS="wrong_answer"
+            TC_MESSAGE="Output differs from expected"
+            TC_SCORE=0
+        fi
     fi
-  fi
 
-  echo "Testcase $((i+1))/$N_CASES: $TC_STATUS (${ELAPSED_MS}ms)"
-
-  if [ "$TC_STATUS" != "pending_spj" ]; then
-    if [ "$TC_STATUS" = "accepted" ]; then
-      TC_SCORE=$SCORE
-    else
-      TC_SCORE=0
-    fi
-    if [ $i -gt 0 ]; then DETAILS+=","; fi
-    DETAILS+="{\"status\":\"$TC_STATUS\",\"time_used\":$ELAPSED_MS,\"memory_used\":$MEMORY_USED,\"score\":$TC_SCORE,\"is_sample\":$IS_SAMPLE"
-    if [ -n "$TC_MESSAGE" ]; then
-      DETAILS+=",\"message\":$(echo "$TC_MESSAGE" | "$PY" -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
-    fi
-    DETAILS+="}"
-  fi
+    "$PY" - "$WORK_DIR/outputs/meta_$i.json" "$TC_STATUS" "$ELAPSED_MS" "$MEMORY_USED" "$TC_SCORE" "$IS_SAMPLE" "$SCORE" "$TC_MESSAGE" <<'PY'
+import json, sys
+path, status, time_ms, mem_mb, score, is_sample, max_score, msg = sys.argv[1:9]
+meta = {
+    "status": status,
+    "time_used": int(time_ms),
+    "memory_used": int(mem_mb),
+    "score": int(score),
+    "is_sample": int(is_sample),
+    "max_score": int(max_score),
+}
+if msg:
+    meta["message"] = msg
+with open(path, "w") as f:
+    json.dump(meta, f)
+PY
+    echo "[JUDGE] Testcase $((i+1))/$N_CASES: REAL STATUS=$TC_STATUS (${ELAPSED_MS}ms, ${MEMORY_USED}MB)"
 done
 
-# ---------------- 5. SPJ checkers (sandboxed too) ----------------
+# ---------------- SPJ phase ----------------
 if [ "$JUDGE_TYPE" = "spj" ]; then
-  if [ -z "$SPJ_LANG" ] || [ -z "$SPJ_CODE" ]; then
-    fail_json system_error "SPJ problem missing spj_language/spj_code" > result.json
-    exit 0
-  fi
-
-  # stage (in, out, expected) per case into a read-only mount for the SPJ container
-  for i in $(seq 0 $((N_CASES - 1))); do
-    mkdir -p "$WORK_DIR/cases/$i"
-    cp "$WORK_DIR/inputs/$i.txt" "$WORK_DIR/cases/$i/in.txt"
-    cp "$WORK_DIR/outputs/$i.txt" "$WORK_DIR/cases/$i/out.txt"
-    cp "$WORK_DIR/expected/$i.txt" "$WORK_DIR/cases/$i/expected.txt"
-  done
-  chmod -R a+r "$WORK_DIR/cases"
-
-  SPJ_COMPILE_CMD=""
-  SPJ_CMD=""
-  SPJ_IMAGE=""
-  case "$SPJ_LANG" in
-    python) SPJ_IMAGE="python:3.12-slim"; SPJ_CMD=""$PY" -B /box/spj_solution.py" ;;
-    cpp) SPJ_IMAGE="sandbox:latest"; SPJ_COMPILE_CMD="g++ -std=c++17 -O2 -o /box/spj_bin /box/spj_solution.cpp"; SPJ_CMD="/box/spj_bin" ;;
-    java) SPJ_IMAGE="eclipse-temurin:21-jdk"; printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/SpjMain.java"; SPJ_COMPILE_CMD="javac /box/SpjMain.java"; SPJ_CMD="java -cp /box SpjMain" ;;
-    javascript) SPJ_IMAGE="node:22-bookworm-slim"; SPJ_CMD="node /box/spj_solution.js" ;;
-    c) SPJ_IMAGE="sandbox:latest"; SPJ_COMPILE_CMD="gcc -std=c11 -O2 -o /box/spj_bin /box/spj_solution.c"; SPJ_CMD="/box/spj_bin" ;;
-    go) SPJ_IMAGE="golang:1.24-bookworm"; printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_main.go"; SPJ_COMPILE_CMD="GOCACHE=/tmp/gocache GOFLAGS=-buildvcs=false go build -o /box/spj_bin /box/spj_main.go"; SPJ_CMD="/box/spj_bin" ;;
-    rust) SPJ_IMAGE="rust:1-bookworm"; printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_main.rs"; SPJ_COMPILE_CMD="rustc -O -o /box/spj_bin /box/spj_main.rs"; SPJ_CMD="/box/spj_bin" ;;
-    *)
-      fail_json system_error "Unsupported SPJ language: $SPJ_LANG" > result.json
-      exit 0
-      ;;
-  esac
-
-  # write SPJ source with the right extension (python/cpp/js/c use printf)
-  case "$SPJ_LANG" in
-    python|cpp|javascript|c) printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.$([ "$SPJ_LANG" = "cpp" ] && echo cpp || ([ "$SPJ_LANG" = "javascript" ] && echo js || ([ "$SPJ_LANG" = "c" ] && echo c || echo py)))" ;;
-  esac
-
-  cp scripts/run_spj_inner.sh "$WORK_DIR/box/run_spj_inner.sh"
-  chmod +x "$WORK_DIR/box/run_spj_inner.sh"
-
-  if ! sudo docker image inspect "$SPJ_IMAGE" >/dev/null 2>&1; then
-    echo "Pulling SPJ sandbox image: $SPJ_IMAGE"
-    if ! sudo docker pull -q "$SPJ_IMAGE" > /dev/null 2>&1; then
-      fail_json system_error "Failed to prepare SPJ sandbox image $SPJ_IMAGE" > result.json
-      exit 0
-    fi
-  else
-    echo "SPJ sandbox image $SPJ_IMAGE already present locally"
-  fi
-
-  SPJ_TOTAL_TIMEOUT=$ACTION_TIMEOUT
-  timeout -s KILL "$SPJ_TOTAL_TIMEOUT" sudo docker run --rm \
-    --network none \
-    --memory "${MEM_MB}m" --memory-swap "${MEM_MB}m" \
-    --cpus 1 \
-    --pids-limit 64 \
-    --cap-drop ALL \
-    --security-opt no-new-privileges \
-    --user 65534:65534 \
-    --read-only \
-    --tmpfs /tmp:rw,size=128m \
-    --tmpfs /dev/shm:rw,size=64m \
-    -v "$WORK_DIR/box:/box" \
-    -v "$WORK_DIR/cases:/cases:ro" \
-    -w /box \
-    "$SPJ_IMAGE" \
-    bash /box/run_spj_inner.sh "$SPJ_LANG" "$SPJ_CMD" "$SPJ_COMPILE_CMD" "$N_CASES" "$TL_SEC" "$COMPILE_TIMEOUT" \
-    > "$WORK_DIR/spj_container.log" 2>&1
-  SPJ_RC=$?
-
-  if [ $SPJ_RC -ne 0 ]; then
-    if [ -f "$WORK_DIR/box/spj_compile_error.txt" ]; then
-      SPJ_ERR=$(head -c 2000 "$WORK_DIR/box/spj_compile_error.txt")
-      echo "{\"submission_id\":\"$SUBMISSION_ID\",\"status\":\"system_error\",\"details\":[{\"status\":\"system_error\",\"message\":$(echo "$SPJ_ERR" | "$PY" -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}]}" > result.json
-    else
-      fail_json system_error "SPJ sandbox execution failed (exit $SPJ_RC)" > result.json
-    fi
-    exit 0
-  fi
-
-  # merge SPJ verdicts into per-case results
-  for i in $(seq 0 $((N_CASES - 1))); do
-    SPJ_META=$("$PY" -c "
-import json
-meta=json.load(open('$WORK_DIR/box/spj_meta.json'))
-print(meta[$i]['exit_code'], meta[$i]['time_ms'])
-")
-    SPJ_EXIT=$(echo "$SPJ_META" | awk '{print $1}')
-    SPJ_MS=$(echo "$SPJ_META" | awk '{print $2}')
-    SPJ_MSG=$(head -c 500 "$WORK_DIR/box/spj_stderr_${i}.txt" 2>/dev/null || echo "")
-
-    if [ $SPJ_MS -gt $MAX_TIME ]; then MAX_TIME=$SPJ_MS; fi
-
-    if [ $SPJ_EXIT -eq 124 ]; then
-      TC_STATUS="time_limit_exceeded"
-      TC_MESSAGE="SPJ time limit exceeded"
-      OVERALL_STATUS="time_limit_exceeded"
-    elif [ $SPJ_EXIT -eq 0 ]; then
-      TC_STATUS="accepted"
-      TOTAL_SCORE=$((TOTAL_SCORE + SCORE))
-      TC_MESSAGE=""
-    elif [ $SPJ_EXIT -eq 1 ]; then
-      TC_STATUS="wrong_answer"
-      TC_MESSAGE="SPJ: $SPJ_MSG"
-      if [ "$OVERALL_STATUS" = "accepted" ]; then OVERALL_STATUS="wrong_answer"; fi
-    else
-      TC_STATUS="system_error"
-      TC_MESSAGE="SPJ checker error (exit code $SPJ_EXIT): $SPJ_MSG"
-      OVERALL_STATUS="system_error"
+    if [ -z "$SPJ_LANG" ] || [ -z "$SPJ_CODE" ]; then
+        fail_json system_error "SPJ problem missing spj_language/spj_code" > result.json
+        rm -rf "$WORK_DIR"
+        exit 0
     fi
 
-    SCORE=$(json_get "inner['testcases'][$i].get('score',10)")
-    IS_SAMPLE=$(json_get "json.dumps(inner['testcases'][$i].get('is_sample',0))")
-    if [ "$TC_STATUS" = "accepted" ]; then TC_SCORE=$SCORE; else TC_SCORE=0; fi
-    if [ $i -gt 0 ]; then DETAILS+=","; fi
-    DETAILS+="{\"status\":\"$TC_STATUS\",\"time_used\":$SPJ_MS,\"memory_used\":0,\"score\":$TC_SCORE,\"is_sample\":$IS_SAMPLE"
-    if [ -n "$TC_MESSAGE" ]; then
-      DETAILS+=",\"message\":$(echo "$TC_MESSAGE" | "$PY" -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+    # Stage cases
+    for i in $(seq 0 $((N_CASES - 1))); do
+        mkdir -p "$WORK_DIR/cases/$i"
+        cp "$WORK_DIR/inputs/$i.txt" "$WORK_DIR/cases/$i/in.txt"
+        cp "$WORK_DIR/outputs/$i.txt" "$WORK_DIR/cases/$i/out.txt"
+        cp "$WORK_DIR/expected/$i.txt" "$WORK_DIR/cases/$i/expected.txt"
+    done
+    chmod -R a+r "$WORK_DIR/cases"
+
+    # SPJ compile
+    SPJ_COMPILE_CMD=""
+    SPJ_ARGS=()
+    case "$SPJ_LANG" in
+        python)
+            printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.py"
+            SPJ_COMPILE_CMD=""
+            SPJ_ARGS=(python3 -B /box/spj_solution.py)
+            ;;
+        cpp)
+            printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.cpp"
+            SPJ_COMPILE_CMD="g++ -std=c++17 -O2 -o /box/spj_bin /box/spj_solution.cpp"
+            SPJ_ARGS=("/box/spj_bin")
+            ;;
+        java)
+            printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/SpjMain.java"
+            SPJ_COMPILE_CMD="javac /box/SpjMain.java"
+            SPJ_ARGS=(java -cp /box SpjMain)
+            ;;
+        javascript)
+            printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.js"
+            SPJ_COMPILE_CMD=""
+            SPJ_ARGS=(node /box/spj_solution.js)
+            ;;
+        c)
+            printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.c"
+            SPJ_COMPILE_CMD="gcc -std=c11 -O2 -o /box/spj_bin /box/spj_solution.c"
+            SPJ_ARGS=("/box/spj_bin")
+            ;;
+        go)
+            printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_main.go"
+            SPJ_COMPILE_CMD="GOCACHE=/tmp/gocache GOFLAGS=-buildvcs=false go build -o /box/spj_bin /box/spj_main.go"
+            SPJ_ARGS=("/box/spj_bin")
+            ;;
+        rust)
+            printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_main.rs"
+            SPJ_COMPILE_CMD="rustc -O -o /box/spj_bin /box/spj_main.rs"
+            SPJ_ARGS=("/box/spj_bin")
+            ;;
+        *)
+            fail_json system_error "Unsupported SPJ language: $SPJ_LANG" > result.json
+            rm -rf "$WORK_DIR"
+            exit 0
+            ;;
+    esac
+
+    if [ -n "$SPJ_COMPILE_CMD" ]; then
+        echo "[JUDGE] Compiling SPJ: $SPJ_COMPILE_CMD"
+        $SUDO "$NSJAIL_BIN" \
+            --quiet \
+            --config "$NSJAIL_COMPILE_CFG" \
+            --bindmount "$WORK_DIR/box:/box:rw" \
+            --bindmount "$WORK_DIR/tmp:/tmp:rw" \
+            --rlimit_as 512 \
+            --rlimit_cpu 60 \
+            --rlimit_nofile 64 \
+            --rlimit_nproc 64 \
+            --time_limit 60 \
+            --cgroup_mem_max $((512 * 1024 * 1024)) \
+            --cgroup_pids_max 64 \
+            --max_cpus 2 \
+            -- \
+            bash -c "$SPJ_COMPILE_CMD" \
+            > "$WORK_DIR/box/spj_compile_out.txt" 2>&1
+
+        if [ $? -ne 0 ]; then
+            SPJ_ERR=$(head -c 2000 "$WORK_DIR/box/spj_compile_out.txt")
+            fail_json system_error "SPJ compilation failed: $SPJ_ERR" > result.json
+            rm -rf "$WORK_DIR"
+            exit 0
+        fi
+        echo "[JUDGE] SPJ compilation OK"
     fi
-    DETAILS+="}"
-  done
+
+    # Run SPJ per case
+    for i in $(seq 0 $((N_CASES - 1))); do
+        SPJ_START=$(date +%s%N)
+        $SUDO "$NSJAIL_BIN" \
+            --quiet \
+            --config "$NSJAIL_RUN_CFG" \
+            --bindmount "$WORK_DIR/box:/box:rw" \
+            --bindmount "$WORK_DIR/cases:/cases:ro" \
+            --bindmount "$WORK_DIR/tmp:/tmp:rw" \
+            --rlimit_as 512 \
+            --rlimit_cpu 10 \
+            --rlimit_nofile 32 \
+            --rlimit_nproc 64 \
+            --rlimit_fsize 1048576 \
+            --time_limit 10 \
+            --cgroup_mem_max $((512 * 1024 * 1024)) \
+            --cgroup_pids_max 64 \
+            --cgroup_cpu_ms_per_sec 1000 \
+            --max_cpus 1 \
+            -- \
+            "${SPJ_ARGS[@]}" "/cases/$i/in.txt" "/cases/$i/out.txt" "/cases/$i/expected.txt" \
+            > "$WORK_DIR/box/spj_stdout_$i.txt" \
+            2> "$WORK_DIR/box/spj_stderr_$i.txt"
+
+        SPJ_RC=$?
+        SPJ_END=$(date +%s%N)
+        SPJ_MS=$(( (SPJ_END - SPJ_START) / 1000000 ))
+
+        case $SPJ_RC in
+            0)
+                SPJ_STATUS="accepted"
+                SPJ_MSG=""
+                ;;
+            1)
+                SPJ_STATUS="wrong_answer"
+                SPJ_MSG=$(head -c 500 "$WORK_DIR/box/spj_stderr_$i.txt" 2>/dev/null || echo "")
+                ;;
+            124)
+                SPJ_STATUS="time_limit_exceeded"
+                SPJ_MSG="SPJ time limit exceeded"
+                ;;
+            159)
+                SPJ_STATUS="dangerous_operation"
+                SPJ_MSG="SPJ forbidden system call detected"
+                ;;
+            *)
+                SPJ_STATUS="system_error"
+                SPJ_MSG="SPJ checker error (exit code $SPJ_RC)"
+                ;;
+        esac
+
+        "$PY" - "$WORK_DIR/outputs/meta_$i.json" "$SPJ_STATUS" "$SPJ_MSG" "$SPJ_MS" <<'PY'
+import json, sys
+path, status, msg, ms = sys.argv[1:5]
+with open(path) as f:
+    meta = json.load(f)
+meta["status"] = status
+meta["time_used"] = max(meta.get("time_used", 0), int(ms))
+if msg:
+    meta["message"] = msg
+else:
+    meta.pop("message", None)
+if status == "accepted":
+    meta["score"] = meta.get("max_score", 0)
+else:
+    meta["score"] = 0
+with open(path, "w") as f:
+    json.dump(meta, f)
+PY
+    done
 fi
 
-DETAILS+="]"
+# ---------------- generate result.json with backend-compatible status mapping ----------------
+"$PY" - "$WORK_DIR" "$SUBMISSION_ID" <<'PY'
+import json, sys, glob, os
 
-echo "{\"submission_id\":\"$SUBMISSION_ID\",\"status\":\"$OVERALL_STATUS\",\"score\":$TOTAL_SCORE,\"time_used\":$MAX_TIME,\"memory_used\":$MAX_MEMORY,\"details\":$DETAILS}" > result.json
-echo "Judge completed: status=$OVERALL_STATUS, score=$TOTAL_SCORE/$MAX_SCORE"
+work_dir, sid = sys.argv[1:3]
+
+# Backend valid statuses (from internal.ts):
+# accepted, wrong_answer, time_limit_exceeded, memory_limit_exceeded,
+# runtime_error, compile_error, system_error, security_blocked
+VALID_STATUSES = {
+    'accepted', 'wrong_answer', 'time_limit_exceeded',
+    'memory_limit_exceeded', 'runtime_error', 'compile_error',
+    'system_error', 'security_blocked'
+}
+
+# Status mapping for backend compatibility
+STATUS_MAP = {
+    'dangerous_operation': 'security_blocked',
+    'output_limit_exceeded': 'wrong_answer',
+}
+
+details = []
+n_cases = len(glob.glob(os.path.join(work_dir, "outputs", "meta_*.json")))
+
+logs = []
+
+for i in range(n_cases):
+    with open(os.path.join(work_dir, "outputs", f"meta_{i}.json")) as f:
+        meta = json.load(f)
+
+    real_status = meta["status"]
+    mapped_status = STATUS_MAP.get(real_status, real_status)
+
+    # If still not in valid statuses, fallback to system_error
+    if mapped_status not in VALID_STATUSES:
+        mapped_status = 'system_error'
+
+    # Log the real status for debugging
+    if real_status != mapped_status:
+        logs.append({
+            "log_type": "status_map",
+            "message": f"Testcase {i}: real_status={real_status} -> mapped_status={mapped_status}"
+        })
+
+    detail = {
+        "status": mapped_status,
+        "time_used": meta["time_used"],
+        "memory_used": meta["memory_used"],
+        "score": meta["score"],
+        "is_sample": meta["is_sample"],
+    }
+
+    # Preserve the real status and reason in the message field
+    msg = meta.get("message", "")
+    if real_status in ('dangerous_operation', 'output_limit_exceeded'):
+        if msg:
+            detail["message"] = f"[{real_status}] {msg}"
+        else:
+            detail["message"] = f"[{real_status}]"
+    elif msg:
+        detail["message"] = msg
+
+    details.append(detail)
+
+# Determine overall status by priority (using real statuses first)
+real_priority = [
+    "dangerous_operation",
+    "system_error",
+    "time_limit_exceeded",
+    "memory_limit_exceeded",
+    "output_limit_exceeded",
+    "runtime_error",
+    "wrong_answer",
+    "accepted"
+]
+real_overall = "accepted"
+for p in real_priority:
+    if any(d.get("_real_status", "") == p for d in details):
+        # We don't store _real_status, check from logs or re-read
+        pass
+
+# Re-read to get real overall status
+real_statuses = []
+for i in range(n_cases):
+    with open(os.path.join(work_dir, "outputs", f"meta_{i}.json")) as f:
+        meta = json.load(f)
+    real_statuses.append(meta["status"])
+
+real_overall = "accepted"
+for p in real_priority:
+    if p in real_statuses:
+        real_overall = p
+        break
+
+# Map overall status for backend
+mapped_overall = STATUS_MAP.get(real_overall, real_overall)
+if mapped_overall not in VALID_STATUSES:
+    mapped_overall = 'system_error'
+
+# Add overall status log
+if real_overall != mapped_overall:
+    logs.append({
+        "log_type": "status_map",
+        "message": f"Overall: real_status={real_overall} -> mapped_status={mapped_overall}"
+    })
+
+# Add a summary log with the real status
+logs.append({
+    "log_type": "result",
+    "message": f"Judging finished: real_status={real_overall}, mapped_status={mapped_overall}, score={sum(d['score'] for d in details)}, time={max((d['time_used'] for d in details), default=0)}ms, memory={max((d['memory_used'] for d in details), default=0)}KB"
+})
+
+score = sum(d["score"] for d in details)
+time_used = max((d["time_used"] for d in details), default=0)
+memory_used = max((d["memory_used"] for d in details), default=0)
+
+result = {
+    "submission_id": sid,
+    "status": mapped_overall,
+    "score": score,
+    "time_used": time_used,
+    "memory_used": memory_used,
+    "details": details,
+    "logs": logs
+}
+print(json.dumps(result, ensure_ascii=False))
+PY
+> result.json
+
+# Echo the real status to stdout (GitHub Actions log)
+REAL_STATUS=$("$PY" -c "
+import json, glob, os
+work_dir = '$WORK_DIR'
+real_priority = ['dangerous_operation','system_error','time_limit_exceeded','memory_limit_exceeded','output_limit_exceeded','runtime_error','wrong_answer','accepted']
+real_statuses = []
+for f in glob.glob(os.path.join(work_dir, 'outputs', 'meta_*.json')):
+    import json
+    with open(f) as fh:
+        real_statuses.append(json.load(fh)['status'])
+for p in real_priority:
+    if p in real_statuses:
+        print(p)
+        break
+else:
+    print('accepted')
+")
+MAPPED_STATUS=$("$PY" -c "import json; print(json.load(open('result.json'))['status'])")
+SCORE=$("$PY" -c "import json; print(json.load(open('result.json'))['score'])")
+
+echo "[JUDGE] ============================================"
+echo "[JUDGE] REAL STATUS: $REAL_STATUS"
+echo "[JUDGE] MAPPED STATUS (for backend): $MAPPED_STATUS"
+echo "[JUDGE] Score: $SCORE"
+echo "[JUDGE] ============================================"
 
 rm -rf "$WORK_DIR"

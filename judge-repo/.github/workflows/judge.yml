@@ -8,7 +8,7 @@ on:
 jobs:
   judge:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,7 +22,6 @@ jobs:
           if [ -z "$FILES" ]; then
             FILES=$(find submissions/ -maxdepth 1 -type f ! -name '.gitkeep' | head -1)
           fi
-
           echo "file=$FILES" >> $GITHUB_OUTPUT
           FILENAME=$(basename "$FILES")
           SUBMISSION_ID=$(echo "$FILENAME" | sed 's/\.[^.]*$//')
@@ -39,7 +38,7 @@ jobs:
             *) LANGUAGE="unknown" ;;
           esac
           echo "language=$LANGUAGE" >> $GITHUB_OUTPUT
-          echo "Detected submission: id=$SUBMISSION_ID, language=$LANGUAGE, file=$FILES"
+          echo "Detected: id=$SUBMISSION_ID, lang=$LANGUAGE, file=$FILES"
 
       - name: Fetch judge data
         id: judge_data
@@ -52,55 +51,38 @@ jobs:
             echo "ERROR: No submission ID found"
             exit 1
           fi
-          # Store judge data OUTSIDE the workspace: the sandbox container never
-          # mounts $HOME, so untrusted code can never read the testcases file.
           mkdir -p "$HOME/judge_meta"
-          RESPONSE=$(curl -s --max-time 10 --retry 3 -H "Authorization: Bearer $CALLBACK_SECRET" \
+          RESPONSE=$(curl -s --max-time 10 --retry 3 \
+            -H "Authorization: Bearer $CALLBACK_SECRET" \
             "${WORKER_API}/api/v1/internal/judge-data?submission_id=${SUBMISSION_ID}")
           echo "$RESPONSE" > "$HOME/judge_meta/judge_data.json"
-          echo "Fetched judge data for submission $SUBMISSION_ID"
-          # GitHub Actions `env:` does NOT expand shell variables ($HOME stays
-          # literal), so export the resolved path via GITHUB_ENV instead.
           echo "JUDGE_DATA_PATH=$HOME/judge_meta/judge_data.json" >> "$GITHUB_ENV"
 
-      # The sandbox image is built ONCE and cached at repo level (Actions
-      # cache). On cache hit we just `docker load` the saved image — no Docker
-      # Hub pull, no rebuild. Keyed on the Dockerfile so a toolchain change
-      # invalidates the cache automatically.
-      - name: Restore sandbox image cache
-        id: sandbox-cache-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/sandbox-image
-          key: sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
-
-      - name: Load or build sandbox image
+      - name: Install nsjail and language runtimes
         run: |
           set -euo pipefail
-          if [ -f /tmp/sandbox-image/sandbox.tar ]; then
-            echo "Sandbox image restored from cache, loading..."
-            sudo docker load -i /tmp/sandbox-image/sandbox.tar
-          else
-            echo "Cache miss, building sandbox image (first run)..."
-            sudo docker build -t sandbox:latest -f docker/sandbox.Dockerfile docker/
-            mkdir -p /tmp/sandbox-image
-            # `docker save -o` writes the file as root (docker daemon), and the
-            # Actions cache save step (runner user) then cannot read it ->
-            # "Permission denied". Stream to stdout instead so the file is
-            # owned by the runner user; chmod as a defensive fallback.
-            sudo docker save sandbox:latest > /tmp/sandbox-image/sandbox.tar
-            chmod 666 /tmp/sandbox-image/sandbox.tar 2>/dev/null || true
+          echo "Installing nsjail and compilers..."
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends -qq \
+            nsjail time golang-go rustc cargo default-jdk
+
+          # Node.js 22 LTS
+          if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'v' -f2 | cut -d'.' -f1)" -lt 22 ]; then
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+            sudo apt-get install -y --no-install-recommends -qq nodejs
           fi
 
-      - name: Save sandbox image cache
-        if: steps.sandbox-cache-restore.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/sandbox-image
-          key: sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
+          echo "Versions:"
+          nsjail --version | head -1
+          gcc --version | head -1
+          python3 --version
+          java -version 2>&1 | head -1
+          node --version
+          go version
+          rustc --version
+          /usr/bin/time --version | head -1
 
-      - name: Compile and Judge (sandboxed)
+      - name: Compile and Judge (nsjail sandbox)
         id: judge
         run: |
           chmod +x scripts/judge.sh
