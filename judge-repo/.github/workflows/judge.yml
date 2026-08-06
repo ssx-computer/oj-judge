@@ -83,16 +83,22 @@ jobs:
             sudo apt-get install -y --no-install-recommends -qq nodejs
           fi
 
-          # nsjail is NOT packaged in Ubuntu 24.04 (noble) universe. Restore the
-          # prebuilt binary from the Actions cache when possible; otherwise build
-          # it from source (same procedure as docker/Dockerfile stage 1). The
-          # binary is dynamically linked, so the libs below are needed in both
-          # paths.
+          # nsjail is NOT packaged in Ubuntu 24.04 (noble) universe. Priority:
+          # 1) prebuilt binary committed to the repo (binaries/nsjail) — zero
+          #    build, zero cache dependency
+          # 2) binary from the Actions cache
+          # 3) build from source, save to cache AND push back to the repo so
+          #    future runs never rebuild
+          # The binary is dynamically linked, so the libs below are needed in
+          # every path.
           sudo apt-get install -y --no-install-recommends -qq \
             libprotobuf-dev libnl-3-dev libnl-route-3-dev libcap-dev pkg-config
 
-          if [ -x /tmp/nsjail-bin/nsjail ]; then
-            echo "nsjail restored from cache"
+          if [ -x binaries/nsjail ]; then
+            echo "nsjail from repo (prebuilt binary)"
+            sudo cp binaries/nsjail /usr/local/bin/
+          elif [ -x /tmp/nsjail-bin/nsjail ]; then
+            echo "nsjail restored from Actions cache"
             sudo cp /tmp/nsjail-bin/nsjail /usr/local/bin/
           else
             echo "Building nsjail from source (cache miss)..."
@@ -104,6 +110,14 @@ jobs:
             rm -rf /tmp/nsjail-src
             mkdir -p /tmp/nsjail-bin
             cp /usr/local/bin/nsjail /tmp/nsjail-bin/
+            # Ship the binary to the repo so future runs never rebuild.
+            mkdir -p binaries
+            cp /usr/local/bin/nsjail binaries/nsjail
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add binaries/nsjail
+            git commit -m "chore: update prebuilt nsjail binary" || true
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main || true
           fi
 
           echo "Versions:"
