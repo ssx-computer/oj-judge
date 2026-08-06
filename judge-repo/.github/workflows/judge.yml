@@ -9,6 +9,11 @@ jobs:
   judge:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # GITHUB_TOKEN needs write access so the nsjail bootstrap can push the
+    # prebuilt binary back to the repo (binaries/nsjail). Without this the
+    # push silently fails and every run rebuilds nsjail (~5 min).
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
