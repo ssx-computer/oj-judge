@@ -163,6 +163,15 @@ COMPILE_TIMEOUT="${COMPILE_TIMEOUT:-60}"
 COMPILE_MEM_MB=$((MEMORY_LIMIT + 512))
 MAX_OUTPUT_BYTES=65536
 
+# ---------------- cgroup v2 preparation ----------------
+# nsjail needs a parent cgroup (default name NSJAIL) with controllers enabled
+# to enforce memory/pids/cpu limits. GitHub runners ship a cgroup v2 root
+# without the NSJAIL parent, so pre-create it.
+if [ -d /sys/fs/cgroup ]; then
+  $SUDO mkdir -p /sys/fs/cgroup/NSJAIL 2>/dev/null || true
+  $SUDO sh -c 'echo "+memory +pids +cpu" > /sys/fs/cgroup/NSJAIL/cgroup.subtree_control' 2>/dev/null || true
+fi
+
 # ---------------- compile phase ----------------
 if [ -n "$COMPILE_CMD" ]; then
     echo "[JUDGE] Compiling: $COMPILE_CMD"
