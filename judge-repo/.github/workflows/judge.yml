@@ -85,7 +85,9 @@ jobs:
           fi
 
           echo "Versions:"
-          nsjail --version | head -1
+          # nsjail has no --version flag (it errors with exit 255); just
+          # verify the binary is present on PATH.
+          command -v nsjail && echo "nsjail OK"
           gcc --version | head -1
           python3 --version
           java -version 2>&1 | head -1
