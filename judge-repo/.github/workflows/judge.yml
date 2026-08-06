@@ -75,6 +75,10 @@ jobs:
           key: nsjail-3.4-${{ runner.arch }}
 
       - name: Install nsjail and language runtimes
+        env:
+          # github.token is NOT auto-injected as an env var; the bootstrap's
+          # `git push` needs it explicitly, otherwise set -u aborts the step.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           echo "Installing compilers and runtimes..."
