@@ -9,32 +9,30 @@
 
 | 攻击 | 之前的风险 | 现在的防线 |
 |------|-----------|-----------|
-| 代码访问网络（外传/挖矿/外连） | runner 宿主有完整外网，`curl`/`socket` 可直接用 | `--network none` 容器零网络 + 静态检测拦截 socket/http/requests/urllib 等 |
+| 代码访问网络（外传/挖矿/外连） | runner 宿主有完整外网，`curl`/`socket` 可直接用 | `--network none` 容器零网络，评测与编译阶段都无法联网 |
 | 直接读取测试点 | `judge_data.json`（含全部输入+期望输出）明文在工作目录 | 判题数据移到 `$HOME/judge_meta/`（容器不挂载）；只读挂载测试**输入**；**期望输出永不出宿主机**，比对在容器退出后进行 |
 | 杀死评测进程 / fork 炸弹 | 用户代码与评测脚本同宿主，`kill -9 $PPID` 即可 | 容器 PID namespace 隔离——容器内只能杀容器内进程；`--pids-limit 64` 限进程数 |
 | 读取 GitHub token / secrets | 环境变量对用户代码可见 | 容器不继承 runner 环境变量（`--env` 未传任何 secret） |
 | 写宿主文件系统 / 提权 | 用户代码以 runner 用户运行 | `--read-only` 根文件系统 + `--user 65534` + `--cap-drop ALL` + `--no-new-privileges` + 默认 seccomp |
 | 内存/CPU 滥用 | `ulimit` 是软限制可绕过 | cgroup 硬限制 `--memory/--cpus`，超限 OOM kill（退出码 137 → `memory_limit_exceeded`） |
 
-## 三层防线
+## 隔离防线
 
-1. **静态检测**（`scripts/check_security.py`）——**默认开启**（`SECURITY_SCAN=1`）：
-   命中危险调用（`os.system`/`subprocess`/`socket`/`eval`/`fork`/敏感路径读取等）的
-   提交不进入评测，直接以 `security_blocked` 状态回调，前端显示"危险指令"。
-   关键字黑名单可被 `#define`、字符串拼接等方式绕过，因此它只是前置标记层，
-   **不是安全边界**——容器沙箱才是真正的安全边界（fail-closed：扫描器异常则拒绝评测）。
-   覆盖语言与规则见脚本头注释。
+所有提交（含编译与运行）一律在 Docker 容器中执行，**不做任何静态代码验证**
+（关键字黑名单可被 `#define`、字符串拼接、`getattr` 等方式绕过，不构成安全
+边界）。安全完全由容器隔离与资源限制保证：
 
-2. **Docker 硬隔离**（`scripts/judge.sh` + `scripts/run_inner.sh`）——编译与运行都在容器内：
+1. **Docker 硬隔离**（`scripts/judge.sh` + `scripts/run_inner.sh`）——编译与运行都在容器内：
    ```
    --network none --memory <mem>m --memory-swap <mem>m --cpus 1 --pids-limit 64
-   --cap-drop ALL --security-opt no-new-privileges --security-opt seccomp=default
+   --cap-drop ALL --security-opt no-new-privileges
    --user 65534:65534 --read-only --tmpfs /tmp:rw,size=128m
    ```
-   镜像按语言选择官方镜像：`python:3.12-slim` / `gcc:13` / `eclipse-temurin:21-jdk` / `node:22-bookworm-slim` / `golang:1.24-bookworm` / `rust:1-bookworm`。
-   单用例墙钟超时用容器内 `timeout -s KILL`，整体超时用外层 `timeout` 兜底。
+   - `--network none`：评测与编译阶段都无网络（无法联网、无法链接外部资源）
+   - 不挂载任何 `/dev` 设备；`--cap-drop ALL` + 非 root + `no-new-privileges` 无法提权/越界
+   - C/C++ 使用自建沙箱镜像 `docker/sandbox.Dockerfile`（经 Actions 缓存预置，免 Docker Hub 拉取），其余语言回退官方镜像
 
-3. **数据隔离**：
+2. **数据隔离**：
    - `judge.yml` 把 `judge_data.json` 下载到 `$HOME/judge_meta/`（workspace 之外，容器不挂载）。
    - `judge.sh` 在宿主机解析判题数据；只把测试**输入**以只读卷挂进容器。
    - 期望输出只在宿主机内存/文件中，容器退出后才比对。
@@ -43,7 +41,7 @@
 ## 失败安全策略
 
 - Docker 不可用 / 镜像拉取失败 → 返回 `system_error`，**绝不降级为裸机运行**不可信代码。
-- 任何异常（无元数据、扫描器异常、SPJ 失败）都以明确状态回调 `backend`，不吞错误。
+- 任何异常（无元数据、SPJ 失败）都以明确状态回调 `backend`，不吞错误。
 
 ## 编译与运行资源上限
 
@@ -51,7 +49,7 @@
 |------|------|
 | 编译 | `COMPILE_TIMEOUT`（默认 60s），容器内 `timeout -s KILL`，超时判 `compile_error`；SPJ 编译同样受控 |
 | 运行（单用例） | 容器内 `timeout -s KILL`（题目时间限制 +1s 余量） |
-| 运行（整体） | 外层 `timeout` 兜底：`TL×N + 300s`，超时判 `time_limit_exceeded` |
+| 运行（整体） | 外层 `timeout` **强制上限**（管理端可配 `action_timeout`，默认 300s），超时 kill 并判 `system_error` |
 | 内存 | cgroup `--memory` 硬限制（题目限制 +512MB 编译余量），OOM kill → `memory_limit_exceeded` |
 | 进程数 | `--pids-limit 64`（防 fork 炸弹） |
 | CPU | `--cpus 1` |

@@ -1,21 +1,21 @@
 #!/bin/bash
 # Sandboxed judge main controller (runs on the GitHub Actions runner host).
 #
-# Security model — untrusted user code NEVER runs on the host:
-#   1. Static scan (check_security.py) blocks os.system/exec/socket/subprocess
-#      and friends BEFORE anything is compiled.
-#   2. Compilation AND execution happen inside a hardened Docker container:
-#        --network none            -> no network access (can't exfiltrate/leech)
-#        --memory / --cpus / --pids-limit
-#                                  -> cgroup hard limits (memory, CPU, fork bomb)
-#        --cap-drop ALL --no-new-privileges --user 65534
-#                                  -> no privileges, can't escape or kill host procs
-#        --read-only + tmpfs       -> can't touch the host filesystem
-#   3. Judge data (testcases) is parsed on the HOST; only test INPUT files are
+# Security model — untrusted user code NEVER runs on the host. There is NO
+# static code scanning: every submission (compile + run) executes inside a
+# hardened Docker container and is stopped by hard limits:
+#   1. --network none            -> no network access (can't exfiltrate/leech,
+#      can't link external resources during compile)
+#   2. --memory / --cpus / --pids-limit
+#                               -> cgroup hard limits (memory, CPU, fork bomb)
+#   3. --cap-drop ALL --no-new-privileges --user 65534
+#                               -> no privileges, no /dev access, can't escape
+#   4. --read-only + tmpfs       -> can't touch the host filesystem
+#   5. Judge data (testcases) is parsed on the HOST; only test INPUT files are
 #      mounted into the container (read-only). Expected outputs NEVER enter the
 #      container — comparison happens on the host after the container exits.
-#   4. Per-case wall-clock kill via `timeout -s KILL` inside the container plus
-#      an outer timeout on `docker run` itself.
+#   6. Per-case wall-clock kill via `timeout -s KILL` inside the container plus
+#      an outer timeout (`action_timeout`, default 300s) on `docker run` itself.
 #
 # Output contract: writes result.json to CWD (same as the legacy judge.sh),
 # consumed by .github/workflows/judge.yml -> /api/v1/internal/callback
@@ -69,34 +69,19 @@ if [ -z "$TIME_LIMIT" ] || [ -z "$MEMORY_LIMIT" ] || [ -z "$N_CASES" ]; then
   exit 0
 fi
 
+# Hard cap for the WHOLE judging action (compile + all test cases), in
+# seconds. The admin can configure it via the site setting `action_timeout`
+# (default 300); judge-data returns it as `action_timeout`. Beyond this the
+# action is killed and system_error is reported.
+ACTION_TIMEOUT=$(json_get "inner.get('action_timeout', 300)")
+if ! [ "$ACTION_TIMEOUT" -ge 1 ] 2>/dev/null; then
+  ACTION_TIMEOUT=300
+fi
+
 echo "Judge config: time_limit=${TIME_LIMIT}ms, memory_limit=${MEMORY_LIMIT}MB, testcases=${N_CASES}, judge_type=${JUDGE_TYPE}"
 echo "Submission: id=${SUBMISSION_ID}, language=${LANGUAGE}, file=${SOURCE_FILE}"
 
-# ---------------- 1. optional static security scan ----------------
-# Static keyword blacklists can be bypassed (#define, string concat, getattr,
-# dynamic imports, ...). The CONTAINER SANDBOX below is the real security
-# boundary, so the scan is OFF by default; set SECURITY_SCAN=1 for an optional
-# stricter pre-gate (e.g. friendly early feedback to users).
-SECURITY_SCAN="${SECURITY_SCAN:-0}"
-if [ "$SECURITY_SCAN" = "1" ]; then
-  BLOCK=$("$PY" scripts/check_security.py "$SOURCE_FILE" "$LANGUAGE" "$SUBMISSION_ID" 2>/dev/null)
-  SCAN_RC=$?
-  if [ $SCAN_RC -eq 1 ]; then
-    echo "SECURITY BLOCKED: suspicious calls detected in submission $SUBMISSION_ID"
-    printf '%s\n' "$BLOCK" > result.json
-    exit 0
-  fi
-  # Fail closed: if the scanner itself could not run, refuse to judge untrusted code.
-  if [ $SCAN_RC -ne 0 ]; then
-    fail_json system_error "Security scanner failed to run (exit $SCAN_RC); refusing to judge untrusted code" > result.json
-    exit 0
-  fi
-  echo "Static security scan passed."
-else
-  echo "Static scan disabled (SECURITY_SCAN=0) - container sandbox is the security boundary."
-fi
-
-# ---------------- 2. prepare sandbox workdir ----------------
+# ---------------- 1. prepare sandbox workdir ----------------
 WORK_DIR="/tmp/judge_${SUBMISSION_ID}"
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR/box" "$WORK_DIR/inputs" "$WORK_DIR/outputs" "$WORK_DIR/expected" "$WORK_DIR/cases"
@@ -181,7 +166,7 @@ else
   echo "Sandbox image $IMAGE already present locally"
 fi
 
-TOTAL_TIMEOUT=$(( TL_SEC * N_CASES + 300 ))
+TOTAL_TIMEOUT=$ACTION_TIMEOUT   # hard cap for the whole judging action
 echo "Running submission in hardened container ($IMAGE), total budget ${TOTAL_TIMEOUT}s"
 timeout -s KILL "$TOTAL_TIMEOUT" sudo docker run --rm \
   --network none \
@@ -208,7 +193,7 @@ if [ $RUN_RC -ne 0 ]; then
     COMPILE_ERR=$(head -c 2000 "$WORK_DIR/outputs/compile_error.txt")
     echo "{\"submission_id\":\"$SUBMISSION_ID\",\"status\":\"compile_error\",\"details\":[{\"status\":\"compile_error\",\"message\":$(echo "$COMPILE_ERR" | "$PY" -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}]}" > result.json
   elif [ $RUN_RC -eq 124 ]; then
-    fail_json time_limit_exceeded "Overall judge budget exceeded (${TOTAL_TIMEOUT}s)" > result.json
+    fail_json system_error "Judging exceeded the configured max runtime (${ACTION_TIMEOUT}s) and was stopped" > result.json
   else
     LOG_TAIL=$(tail -c 500 "$WORK_DIR/container.log" | tr '\n' ' ')
     fail_json system_error "Sandbox execution failed (exit $RUN_RC): $LOG_TAIL" > result.json
@@ -353,7 +338,7 @@ if [ "$JUDGE_TYPE" = "spj" ]; then
     echo "SPJ sandbox image $SPJ_IMAGE already present locally"
   fi
 
-  SPJ_TOTAL_TIMEOUT=$(( TL_SEC * N_CASES + 300 ))
+  SPJ_TOTAL_TIMEOUT=$ACTION_TIMEOUT
   timeout -s KILL "$SPJ_TOTAL_TIMEOUT" sudo docker run --rm \
     --network none \
     --memory "${MEM_MB}m" --memory-swap "${MEM_MB}m" \

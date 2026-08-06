@@ -103,18 +103,13 @@ jobs:
       - name: Compile and Judge (sandboxed)
         id: judge
         run: |
-          chmod +x scripts/judge.sh scripts/check_security.py
+          chmod +x scripts/judge.sh
           bash scripts/judge.sh
         env:
           SUBMISSION_ID: ${{ steps.info.outputs.submission_id }}
           LANGUAGE: ${{ steps.info.outputs.language }}
           SOURCE_FILE: ${{ steps.info.outputs.file }}
           JUDGE_DATA: ${{ env.JUDGE_DATA_PATH }}
-          # SECURITY_SCAN=1 (default): the static scan blocks dangerous calls
-          # and reports the submission as security_blocked ("dangerous code")
-          # instead of judging it. The container sandbox remains the real
-          # security boundary either way (blacklists are bypassable).
-          SECURITY_SCAN: "1"
 
       - name: Callback result
         if: always()
