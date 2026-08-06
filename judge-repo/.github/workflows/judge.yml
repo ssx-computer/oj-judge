@@ -58,30 +58,52 @@ jobs:
           echo "$RESPONSE" > "$HOME/judge_meta/judge_data.json"
           echo "JUDGE_DATA_PATH=$HOME/judge_meta/judge_data.json" >> "$GITHUB_ENV"
 
+      # nsjail is not packaged in Ubuntu 24.04 (noble), so we build it from
+      # source once and cache the binary at repo level (Actions cache). On a
+      # cache hit the install step just copies the binary and installs its
+      # runtime libs — no rebuild, no git clone.
+      - name: Restore nsjail binary cache
+        id: nsjail-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/nsjail-bin
+          key: nsjail-3.4-${{ runner.arch }}
+
       - name: Install nsjail and language runtimes
         run: |
           set -euo pipefail
-          echo "Installing build deps, compilers and runtimes..."
+          echo "Installing compilers and runtimes..."
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends -qq \
-            build-essential git protobuf-compiler libprotobuf-dev \
-            libnl-3-dev libnl-route-3-dev libcap-dev pkg-config \
             time golang-go rustc cargo default-jdk
-
-          # nsjail is NOT packaged in Ubuntu 24.04 (noble) universe, so build
-          # it from source (same procedure as docker/Dockerfile stage 1).
-          if ! command -v nsjail >/dev/null 2>&1; then
-            echo "Building nsjail from source..."
-            git clone --depth 1 --branch 3.4 https://github.com/google/nsjail.git /tmp/nsjail-src
-            make -C /tmp/nsjail-src -j2
-            sudo cp /tmp/nsjail-src/nsjail /usr/local/bin/
-            rm -rf /tmp/nsjail-src
-          fi
 
           # Node.js 22 LTS
           if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'v' -f2 | cut -d'.' -f1)" -lt 22 ]; then
             curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
             sudo apt-get install -y --no-install-recommends -qq nodejs
+          fi
+
+          # nsjail is NOT packaged in Ubuntu 24.04 (noble) universe. Restore the
+          # prebuilt binary from the Actions cache when possible; otherwise build
+          # it from source (same procedure as docker/Dockerfile stage 1). The
+          # binary is dynamically linked, so the libs below are needed in both
+          # paths.
+          sudo apt-get install -y --no-install-recommends -qq \
+            libprotobuf-dev libnl-3-dev libnl-route-3-dev libcap-dev pkg-config
+
+          if [ -x /tmp/nsjail-bin/nsjail ]; then
+            echo "nsjail restored from cache"
+            sudo cp /tmp/nsjail-bin/nsjail /usr/local/bin/
+          else
+            echo "Building nsjail from source (cache miss)..."
+            sudo apt-get install -y --no-install-recommends -qq \
+              build-essential git protobuf-compiler
+            git clone --depth 1 --branch 3.4 https://github.com/google/nsjail.git /tmp/nsjail-src
+            make -C /tmp/nsjail-src -j2
+            sudo cp /tmp/nsjail-src/nsjail /usr/local/bin/
+            rm -rf /tmp/nsjail-src
+            mkdir -p /tmp/nsjail-bin
+            cp /usr/local/bin/nsjail /tmp/nsjail-bin/
           fi
 
           echo "Versions:"
@@ -95,6 +117,14 @@ jobs:
           go version
           rustc --version
           /usr/bin/time --version | head -1
+
+      - name: Save nsjail binary cache
+        if: steps.nsjail-cache-restore.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/nsjail-bin
+          key: nsjail-3.4-${{ runner.arch }}
 
       - name: Compile and Judge (nsjail sandbox)
         id: judge
