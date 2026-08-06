@@ -8,7 +8,7 @@ on:
 jobs:
   judge:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,10 +61,22 @@ jobs:
       - name: Install nsjail and language runtimes
         run: |
           set -euo pipefail
-          echo "Installing nsjail and compilers..."
+          echo "Installing build deps, compilers and runtimes..."
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends -qq \
-            nsjail time golang-go rustc cargo default-jdk
+            build-essential git protobuf-compiler libprotobuf-dev \
+            libnl-3-dev libnl-route-3-dev libcap-dev pkg-config \
+            time golang-go rustc cargo default-jdk
+
+          # nsjail is NOT packaged in Ubuntu 24.04 (noble) universe, so build
+          # it from source (same procedure as docker/Dockerfile stage 1).
+          if ! command -v nsjail >/dev/null 2>&1; then
+            echo "Building nsjail from source..."
+            git clone --depth 1 --branch 3.4 https://github.com/google/nsjail.git /tmp/nsjail-src
+            make -C /tmp/nsjail-src -j2
+            sudo cp /tmp/nsjail-src/nsjail /usr/local/bin/
+            rm -rf /tmp/nsjail-src
+          fi
 
           # Node.js 22 LTS
           if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'v' -f2 | cut -d'.' -f1)" -lt 22 ]; then
