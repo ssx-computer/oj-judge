@@ -333,7 +333,7 @@ meta = {
     "time_used": int(time_ms),
     "memory_used": int(mem_mb),
     "score": int(score),
-    "is_sample": int(is_sample),
+    "is_sample": int(is_sample == 'true' or is_sample == '1'),
     "max_score": int(max_score),
 }
 if msg:
@@ -361,7 +361,7 @@ meta = {
     "time_used": int(time_ms),
     "memory_used": int(mem_mb),
     "score": int(score),
-    "is_sample": int(is_sample),
+    "is_sample": int(is_sample == 'true' or is_sample == '1'),
     "max_score": int(max_score),
 }
 if msg:
@@ -401,7 +401,7 @@ meta = {
     "time_used": int(time_ms),
     "memory_used": int(mem_mb),
     "score": int(score),
-    "is_sample": int(is_sample),
+    "is_sample": int(is_sample == 'true' or is_sample == '1'),
     "max_score": int(max_score),
 }
 if msg:
