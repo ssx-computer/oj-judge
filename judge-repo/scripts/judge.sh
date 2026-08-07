@@ -163,15 +163,6 @@ COMPILE_TIMEOUT="${COMPILE_TIMEOUT:-60}"
 COMPILE_MEM_MB=$((MEMORY_LIMIT + 512))
 MAX_OUTPUT_BYTES=65536
 
-# ---------------- cgroup v2 preparation ----------------
-# nsjail needs a parent cgroup (default name NSJAIL) with controllers enabled
-# to enforce memory/pids/cpu limits. GitHub runners ship a cgroup v2 root
-# without the NSJAIL parent, so pre-create it.
-if [ -d /sys/fs/cgroup ]; then
-  $SUDO mkdir -p /sys/fs/cgroup/NSJAIL 2>/dev/null || true
-  $SUDO sh -c 'echo "+memory +pids +cpu" > /sys/fs/cgroup/NSJAIL/cgroup.subtree_control' 2>/dev/null || true
-fi
-
 # ---------------- compile phase ----------------
 if [ -n "$COMPILE_CMD" ]; then
     echo "[JUDGE] Compiling: $COMPILE_CMD"
@@ -190,9 +181,6 @@ if [ -n "$COMPILE_CMD" ]; then
         --rlimit_nproc 128 \
         --rlimit_fsize 1048576 \
         --time_limit ${COMPILE_TIMEOUT} \
-        --cgroup_mem_max $((COMPILE_MEM_MB * 1024 * 1024)) \
-        --cgroup_pids_max 128 \
-        --cgroup_cpu_ms_per_sec 2000 \
         --max_cpus 2 \
         -- \
         bash -c "$COMPILE_CMD" \
@@ -245,9 +233,6 @@ for i in $(seq 0 $((N_CASES - 1))); do
         --rlimit_nproc 64 \
         --rlimit_fsize 1048576 \
         --time_limit ${TL_SEC} \
-        --cgroup_mem_max $((MEMORY_LIMIT * 1024 * 1024)) \
-        --cgroup_pids_max 64 \
-        --cgroup_cpu_ms_per_sec 1000 \
         --max_cpus 1 \
         -- \
         "${RUN_ARGS[@]}" \
@@ -502,8 +487,6 @@ if [ "$JUDGE_TYPE" = "spj" ]; then
             --rlimit_nofile 64 \
             --rlimit_nproc 64 \
             --time_limit 60 \
-            --cgroup_mem_max $((512 * 1024 * 1024)) \
-            --cgroup_pids_max 64 \
             --max_cpus 2 \
             -- \
             bash -c "$SPJ_COMPILE_CMD" \
@@ -533,9 +516,9 @@ if [ "$JUDGE_TYPE" = "spj" ]; then
             --rlimit_nproc 64 \
             --rlimit_fsize 1048576 \
             --time_limit 10 \
-            --cgroup_mem_max $((512 * 1024 * 1024)) \
-            --cgroup_pids_max 64 \
-            --cgroup_cpu_ms_per_sec 1000 \
+            --cgroup_mem_max 0 \
+            --cgroup_pids_max 0 \
+            --cgroup_cpu_ms_per_sec 0 \
             --max_cpus 1 \
             -- \
             "${SPJ_ARGS[@]}" "/cases/$i/in.txt" "/cases/$i/out.txt" "/cases/$i/expected.txt" \
