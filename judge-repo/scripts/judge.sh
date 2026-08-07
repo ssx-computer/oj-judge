@@ -121,7 +121,7 @@ RUN_ARGS=()
 case "$LANGUAGE" in
     python)
         COMPILE_CMD=""
-        RUN_ARGS=(python3 -B "/box/$SOURCE_FILENAME")
+        RUN_ARGS=(/usr/bin/python3 -B "/box/$SOURCE_FILENAME")
         ;;
     cpp)
         COMPILE_CMD="g++ -std=c++17 -O2 -o /box/solution_bin /box/$SOURCE_FILENAME"
@@ -132,11 +132,11 @@ case "$LANGUAGE" in
         COMPILE_CMD="javac /box/Main.java"
         JAVA_HEAP_LIMIT=$((MEMORY_LIMIT - 64))
         [ "$JAVA_HEAP_LIMIT" -lt 32 ] && JAVA_HEAP_LIMIT=32
-        RUN_ARGS=(java "-Xmx${JAVA_HEAP_LIMIT}m" "-Xms32m" -XX:+UseSerialGC -cp /box Main)
+        RUN_ARGS=(/usr/bin/java "-Xmx${JAVA_HEAP_LIMIT}m" "-Xms32m" -XX:+UseSerialGC -cp /box Main)
         ;;
     javascript)
         COMPILE_CMD=""
-        RUN_ARGS=(node "/box/$SOURCE_FILENAME")
+        RUN_ARGS=(/usr/bin/node "/box/$SOURCE_FILENAME")
         ;;
     c)
         COMPILE_CMD="gcc -std=c11 -O2 -o /box/solution_bin /box/$SOURCE_FILENAME"
@@ -183,7 +183,7 @@ if [ -n "$COMPILE_CMD" ]; then
         --time_limit ${COMPILE_TIMEOUT} \
         --max_cpus 2 \
         -- \
-        bash -c "$COMPILE_CMD" \
+        /bin/bash -c "$COMPILE_CMD" \
         > "$WORK_DIR/outputs/compile_out.txt" 2>&1
 
     COMPILE_RC=$?
@@ -436,7 +436,7 @@ if [ "$JUDGE_TYPE" = "spj" ]; then
         python)
             printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.py"
             SPJ_COMPILE_CMD=""
-            SPJ_ARGS=(python3 -B /box/spj_solution.py)
+            SPJ_ARGS=(/usr/bin/python3 -B /box/spj_solution.py)
             ;;
         cpp)
             printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.cpp"
@@ -446,12 +446,12 @@ if [ "$JUDGE_TYPE" = "spj" ]; then
         java)
             printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/SpjMain.java"
             SPJ_COMPILE_CMD="javac /box/SpjMain.java"
-            SPJ_ARGS=(java -cp /box SpjMain)
+            SPJ_ARGS=(/usr/bin/java -cp /box SpjMain)
             ;;
         javascript)
             printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.js"
             SPJ_COMPILE_CMD=""
-            SPJ_ARGS=(node /box/spj_solution.js)
+            SPJ_ARGS=(/usr/bin/node /box/spj_solution.js)
             ;;
         c)
             printf '%s' "$SPJ_CODE" > "$WORK_DIR/box/spj_solution.c"
@@ -489,7 +489,7 @@ if [ "$JUDGE_TYPE" = "spj" ]; then
             --time_limit 60 \
             --max_cpus 2 \
             -- \
-            bash -c "$SPJ_COMPILE_CMD" \
+            /bin/bash -c "$SPJ_COMPILE_CMD" \
             > "$WORK_DIR/box/spj_compile_out.txt" 2>&1
 
         if [ $? -ne 0 ]; then
