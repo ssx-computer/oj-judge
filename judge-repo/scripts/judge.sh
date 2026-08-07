@@ -574,7 +574,7 @@ PY
 fi
 
 # ---------------- generate result.json with backend-compatible status mapping ----------------
-"$PY" - "$WORK_DIR" "$SUBMISSION_ID" <<'PY'
+"$PY" - "$WORK_DIR" "$SUBMISSION_ID" <<'PY' > result.json
 import json, sys, glob, os
 
 work_dir, sid = sys.argv[1:3]
@@ -700,7 +700,6 @@ result = {
 }
 print(json.dumps(result, ensure_ascii=False))
 PY
-> result.json
 
 # Echo the real status to stdout (GitHub Actions log)
 REAL_STATUS=$("$PY" -c "
