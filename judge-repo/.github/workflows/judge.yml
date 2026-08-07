@@ -74,6 +74,16 @@ jobs:
           path: /tmp/nsjail-bin
           key: nsjail-3.4-${{ runner.arch }}
 
+      # apt .deb packages (openjdk/golang/rustc/...) are re-downloaded on every
+      # run. Cache the .deb files so `apt-get install` installs from local
+      # files (no network download of the big toolchains).
+      - name: Restore apt package cache
+        id: apt-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/apt-cache
+          key: apt-archives-${{ runner.arch }}
+
       - name: Install nsjail and language runtimes
         env:
           # github.token is NOT auto-injected as an env var; the bootstrap's
@@ -82,6 +92,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "Installing compilers and runtimes..."
+          # Restore cached .deb packages (if any) so apt installs offline.
+          if [ -d /tmp/apt-cache ] && [ -n "$(ls /tmp/apt-cache/*.deb 2>/dev/null)" ]; then
+            echo "Using cached .deb packages ($(ls /tmp/apt-cache/*.deb | wc -l) files)"
+            sudo mkdir -p /var/cache/apt/archives
+            sudo cp -a /tmp/apt-cache/. /var/cache/apt/archives/ || true
+          fi
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends -qq \
             time golang-go rustc cargo default-jdk
@@ -129,6 +145,10 @@ jobs:
             git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main || true
           fi
 
+          # Stage downloaded .deb files for the cache save step.
+          sudo mkdir -p /tmp/apt-cache
+          sudo cp -a /var/cache/apt/archives/*.deb /tmp/apt-cache/ 2>/dev/null || true
+
           echo "Versions:"
           # nsjail has no --version flag (it errors with exit 255); just
           # verify the binary is present on PATH.
@@ -148,6 +168,14 @@ jobs:
         with:
           path: /tmp/nsjail-bin
           key: nsjail-3.4-${{ runner.arch }}
+
+      - name: Save apt package cache
+        if: steps.apt-restore.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/apt-cache
+          key: apt-archives-${{ runner.arch }}
 
       - name: Compile and Judge (nsjail sandbox)
         id: judge
