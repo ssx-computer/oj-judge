@@ -9,11 +9,6 @@ jobs:
   judge:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # GITHUB_TOKEN needs write access so the nsjail bootstrap can push the
-    # prebuilt binary back to the repo (binaries/nsjail). Without this the
-    # push silently fails and every run rebuilds nsjail (~5 min).
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,10 +80,6 @@ jobs:
           key: apt-archives-${{ runner.arch }}
 
       - name: Install nsjail and language runtimes
-        env:
-          # github.token is NOT auto-injected as an env var; the bootstrap's
-          # `git push` needs it explicitly, otherwise set -u aborts the step.
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           echo "Installing compilers and runtimes..."
@@ -135,14 +126,6 @@ jobs:
             rm -rf /tmp/nsjail-src
             mkdir -p /tmp/nsjail-bin
             cp /usr/local/bin/nsjail /tmp/nsjail-bin/
-            # Ship the binary to the repo so future runs never rebuild.
-            mkdir -p binaries
-            cp /usr/local/bin/nsjail binaries/nsjail
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add binaries/nsjail
-            git commit -m "chore: update prebuilt nsjail binary" || true
-            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main || true
           fi
 
           # Stage downloaded .deb files for the cache save step.
