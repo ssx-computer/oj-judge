@@ -2038,6 +2038,22 @@ class ApiClient {
     return this.request<{ message: string }>(`/teams/${teamId}/problems/${problemId}`, { method: 'DELETE' });
   }
 
+  // ── Team Problem Testcases (团队私有题目测试数据,存 GitHub) ──
+  async getTeamProblemTestcases(teamId: number, problemId: number) {
+    return this.request<{ testcases: Testcase[] }>(`/teams/${teamId}/problems/${problemId}/testcases`);
+  }
+  async addTeamProblemTestcases(teamId: number, problemId: number, testcases: Testcase[]) {
+    return this.request<{ message: string; count: number }>(`/teams/${teamId}/problems/${problemId}/testcases`, {
+      method: 'POST',
+      body: JSON.stringify(testcases),
+    });
+  }
+  async deleteTeamProblemTestcase(teamId: number, problemId: number, index: number) {
+    return this.request<{ message: string }>(`/teams/${teamId}/problems/${problemId}/testcases/${index}`, {
+      method: 'DELETE',
+    });
+  }
+
   // ── Team Groups (分组) ──
   async getTeamGroups(teamId: number) {
     return this.request<{ groups: { id: number; name: string; sort_order: number; member_count: number }[] }>(`/teams/${teamId}/groups`);
