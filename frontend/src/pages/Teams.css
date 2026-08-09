@@ -1194,3 +1194,257 @@
     display: none;
   }
 }
+/* ── 团队题目测试数据管理面板 ──
+   面板复用 testcase-* 类名(原定义在 Admin.css,团队页未加载),
+   此处为团队页提供完整样式,风格与团队卡片一致 */
+.team-testcase-panel .tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.team-testcase-panel .testcase-existing,
+.team-testcase-panel .testcase-new {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.team-testcase-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+/* 统计条 */
+.team-testcase-panel .testcase-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-tertiary, #f8fafc);
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+
+.team-testcase-panel .testcase-stats span {
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 999px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+.team-testcase-panel .testcase-stats .btn {
+  margin-left: auto;
+}
+
+/* 已有测试点列表 */
+.team-testcase-panel .testcase-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.team-testcase-panel .testcase-item {
+  background: var(--bg-tertiary, #f8fafc);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.team-testcase-panel .testcase-item:hover {
+  border-color: var(--primary, #6366f1);
+}
+
+.team-testcase-panel .testcase-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.team-testcase-panel .testcase-index {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  min-width: 34px;
+}
+
+.team-testcase-panel .testcase-type-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+
+.team-testcase-panel .testcase-type-badge.sample {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.team-testcase-panel .testcase-type-badge.hidden {
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--text-secondary, #64748b);
+}
+
+.team-testcase-panel .testcase-score {
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+}
+
+.team-testcase-panel .testcase-expand-icon {
+  margin-left: auto;
+  color: var(--text-secondary, #64748b);
+  display: flex;
+  align-items: center;
+}
+
+/* 展开详情 */
+.team-testcase-panel .testcase-detail {
+  border-top: 1px dashed var(--border, #e5e7eb);
+}
+
+.team-testcase-panel .testcase-item-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 14px;
+}
+
+.team-testcase-panel .testcase-io label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.team-testcase-panel .testcase-io pre {
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* 新增测试点表单 */
+.team-testcase-panel .testcase-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto auto;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-tertiary, #f8fafc);
+  border: 1px dashed var(--border, #e5e7eb);
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+
+.team-testcase-panel .testcase-form-row .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.team-testcase-panel .testcase-form-row .form-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+}
+
+.team-testcase-panel .testcase-form-row textarea {
+  width: 100%;
+  min-height: 84px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text-primary, #0f172a);
+  resize: vertical;
+}
+
+.team-testcase-panel .testcase-form-row textarea:focus {
+  outline: none;
+  border-color: var(--primary, #6366f1);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.team-testcase-panel .testcase-form-row .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.team-testcase-panel .testcase-form-row input[type="number"] {
+  width: 76px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text-primary, #0f172a);
+}
+
+/* 操作区 */
+.team-testcase-panel .form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.team-testcase-panel .form-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 空状态 */
+.team-testcase-panel .testcase-empty {
+  color: var(--text-muted, #94a3b8);
+  font-size: 14px;
+  text-align: center;
+  padding: 28px 0;
+}
+
+@media (max-width: 768px) {
+  .team-testcase-panel .testcase-item-body {
+    grid-template-columns: 1fr;
+  }
+  .team-testcase-panel .testcase-form-row {
+    grid-template-columns: 1fr;
+  }
+  .team-testcase-panel .testcase-stats .btn {
+    margin-left: 0;
+    width: 100%;
+  }
+}

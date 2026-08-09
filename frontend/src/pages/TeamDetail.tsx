@@ -452,7 +452,7 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<any>({
     title: '', slug: '', description: '', input_format: '', output_format: '',
-    time_limit: 1000, memory_limit: 256, tags: '', difficulty: 'Easy', testcases: '',
+    time_limit: 1000, memory_limit: 256, tags: '', difficulty: 'Easy',
   });
 
   // ── 测试数据管理状态(类比主题库 AdminTestcases) ──
@@ -492,19 +492,15 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
       return;
     }
     try {
-      let testcases;
-      if (form.testcases && form.testcases.trim()) {
-        try { testcases = JSON.parse(form.testcases); } catch { addToast('error', t('teams.testcasesHint')); return; }
-      }
       await api.createTeamProblem(teamId, {
         title: form.title, slug: form.slug, description: form.description,
         input_format: form.input_format, output_format: form.output_format,
         time_limit: form.time_limit, memory_limit: form.memory_limit,
         tags: form.tags ? form.tags.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-        difficulty: form.difficulty, testcases,
+        difficulty: form.difficulty,
       });
       addToast('success', t('teams.problemCreated'));
-      setForm({ title: '', slug: '', description: '', input_format: '', output_format: '', time_limit: 1000, memory_limit: 256, tags: '', difficulty: 'Easy', testcases: '' });
+      setForm({ title: '', slug: '', description: '', input_format: '', output_format: '', time_limit: 1000, memory_limit: 256, tags: '', difficulty: 'Easy' });
       setShowForm(false);
       fetchProblems();
     } catch (e: any) {
@@ -671,7 +667,7 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
   // 测试数据管理视图
   if (selectedProblem) {
     return (
-      <div>
+      <div className="team-testcase-panel">
         <div className="tab-actions">
           <button className="btn btn-secondary btn-sm" onClick={() => setSelectedProblem(null)}>
             <ArrowLeft size={14} /> {t('common.back')}
@@ -680,7 +676,7 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
         </div>
 
         <div className="testcase-existing" style={{ marginTop: 12 }}>
-          <h3>{t('admin.existingTestcases')} ({existingTestcases.length})</h3>
+          <h3><FileArchive size={16} style={{ color: 'var(--primary)' }} /> {t('admin.existingTestcases')} ({existingTestcases.length})</h3>
           {tcLoading ? <LoadingSpinner /> : existingTestcases.length === 0 ? (
             <p className="testcase-empty">{t('admin.noTestcaseData')}</p>
           ) : (
@@ -734,7 +730,7 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
         </div>
 
         <div className="testcase-new" style={{ marginTop: 16 }}>
-          <h3>{t('admin.addNewTestcases')}</h3>
+          <h3><Upload size={16} style={{ color: 'var(--primary)' }} /> {t('admin.addNewTestcases')}</h3>
           {newTestcases.map((tc, idx) => (
             <div key={idx} className="testcase-form-row">
               <div className="form-group">
@@ -827,7 +823,6 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
             </label>
           </div>
           <label>{t('teams.problemTags')} <input className="form-input" placeholder="tag1,tag2" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} /></label>
-          <label>{t('teams.testcases')} <textarea className="form-input form-textarea" rows={3} placeholder={t('teams.testcasesHint')} value={form.testcases} onChange={(e) => setForm({ ...form, testcases: e.target.value })} /></label>
           <div className="form-actions"><button type="submit" className="btn btn-primary"><Save size={14} /> {t('common.submit')}</button></div>
         </form>
       )}

@@ -2057,7 +2057,7 @@ teams.post('/:id/problems/:problemId/testcases', authMiddleware, async (c) => {
 
   // 大小上限:单个测试点 input+expected_output 的字节数
   for (const tc of validTestcases) {
-    const size = Buffer.byteLength(String(tc.input || '')) + Buffer.byteLength(String(tc.expected_output || ''));
+    const size = new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length;
     if (size > config.max_testcase_size) {
       return c.json({
         success: false,
@@ -2077,11 +2077,11 @@ teams.post('/:id/problems/:problemId/testcases', authMiddleware, async (c) => {
 
   // 单题测试数据总量上限:现有总量 + 新增总量
   const existingTotalSize = existingTestcases.reduce(
-    (sum: number, tc: any) => sum + Buffer.byteLength(String(tc.input || '')) + Buffer.byteLength(String(tc.expected_output || '')),
+    (sum: number, tc: any) => sum + new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length,
     0
   );
   const newTotalSize = validTestcases.reduce(
-    (sum: number, tc: any) => sum + Buffer.byteLength(String(tc.input || '')) + Buffer.byteLength(String(tc.expected_output || '')),
+    (sum: number, tc: any) => sum + new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length,
     0
   );
   if (existingTotalSize + newTotalSize > config.max_total_testcase_size) {
