@@ -5,6 +5,7 @@ import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { DIFFICULTIES, DIFFICULTY_COLORS } from '../../constants';
 import { t } from '../../i18n';
+import DOMPurify from 'dompurify';
 import {
   Search, Trash2, Edit3, X, ChevronLeft, ChevronRight, FileText, Save, Download, Upload,
 } from 'lucide-react';
@@ -148,7 +149,27 @@ export default function AdminProblems() {
   };
 
   const parseFpsXml = (xmlText: string): Record<string, unknown>[] => {
-    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+    // 安全加固:不可信的 XML 原始文本不能直接交给 DOM 解析器。
+    // 先用 DOMPurify 中和可存活到下游渲染的活动标记(script、事件属性等),
+    // 只解析净化后的 XML 文本。
+    const sanitizedXml = DOMPurify.sanitize(xmlText, {
+      ALLOWED_TAGS: [
+        'fps', 'generator', 'item', 'title', 'time_limit', 'memory_limit',
+        'description', 'input', 'output', 'sample_input', 'sample_output',
+        'test_input', 'test_output', 'hint', 'source',
+      ],
+      ALLOWED_ATTR: [],
+      KEEP_CONTENT: true,
+    });
+
+    const doc = new DOMParser().parseFromString(sanitizedXml, 'text/xml');
+
+    // 校验解析错误:DOMParser 解析失败时会生成 <parsererror> 节点,
+    // 直接拒绝畸形载荷,避免继续处理无效节点。
+    if (doc.querySelector('parsererror')) {
+      throw new Error(t('admin.importLogParseFps') + ': Invalid XML');
+    }
+
     const items = Array.from(doc.querySelectorAll('item'));
     const decode = (s: string) => {
       const t = s.trim();
