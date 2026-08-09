@@ -1147,7 +1147,7 @@ teams.post('/:id/contests', authMiddleware, async (c) => {
 });
 
 // GET /teams/:id/contests/:contestId — 竞赛详情
-teams.get('/:id/contests/:contestId', async (c) => {
+teams.get('/:id/contests/:contestId', authMiddleware, async (c) => {
   const id = parseInt(c.req.param('id') || '0');
   const contestId = parseInt(c.req.param('contestId') || '0');
 
@@ -1238,7 +1238,7 @@ teams.post('/:id/contests/:contestId/register', authMiddleware, async (c) => {
 
 // GET /teams/:id/contests/:contestId/problems/:problemId — 团队比赛单题详情
 // 未开始仅主办方可见;运行中仅团队成员可见(与比赛详情一致)
-teams.get('/:id/contests/:contestId/problems/:problemId', async (c) => {
+teams.get('/:id/contests/:contestId/problems/:problemId', authMiddleware, async (c) => {
   const id = parseInt(c.req.param('id') || '0');
   const contestId = parseInt(c.req.param('contestId') || '0');
   const problemId = parseInt(c.req.param('problemId') || '0');
@@ -1422,7 +1422,7 @@ teams.delete('/:id/contests/:contestId/problems/:problemId', authMiddleware, asy
 // ============================================================
 
 // GET /teams/:id/contests/:contestId/announcements — 公告列表(团队成员可见)
-teams.get('/:id/contests/:contestId/announcements', async (c) => {
+teams.get('/:id/contests/:contestId/announcements', authMiddleware, async (c) => {
   const id = parseInt(c.req.param('id') || '0');
   const contestId = parseInt(c.req.param('contestId') || '0');
 
@@ -1649,7 +1649,7 @@ function canManageLists(db: D1Database, teamId: number, userId: number): Promise
 }
 
 // GET /teams/:id/problems — 私有题目列表(仅成员可见)
-teams.get('/:id/problems', async (c) => {
+teams.get('/:id/problems', authMiddleware, async (c) => {
   const id = parseInt(c.req.param('id') || '0');
   const page = Math.max(1, parseInt(c.req.query('page') || '1'));
   const pageSize = Math.min(50, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
@@ -1761,7 +1761,7 @@ teams.post('/:id/problems', authMiddleware, async (c) => {
 });
 
 // GET /teams/:id/problems/:problemId — 私有题目详情(仅成员可见,含样例)
-teams.get('/:id/problems/:problemId', async (c) => {
+teams.get('/:id/problems/:problemId', authMiddleware, async (c) => {
   const id = parseInt(c.req.param('id') || '0');
   const problemId = parseInt(c.req.param('problemId') || '0');
 
