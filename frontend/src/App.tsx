@@ -107,6 +107,7 @@ function App() {
             <Route path="/users/:username" element={<Profile />} />
             <Route path="/favorites" element={<Favorites />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
@@ -134,10 +135,11 @@ function App() {
               <Route path="messages" element={<AdminMessages />} />
               <Route path="ads" element={<AdminAds />} />
             </Route>
-            <Route path="/contests" element={<Contests />} />
-            <Route path="/contests/new" element={<CreateContest />} />
-            <Route path="/contests/:id/edit" element={<CreateContest />} />
-            <Route path="/contests/:id" element={<ContestDetail />} />
+            <Route path="/matches" element={<Contests />} />
+            <Route path="/match/new" element={<CreateContest />} />
+            <Route path="/match/:id/edit" element={<CreateContest />} />
+            <Route path="/match/:id" element={<ContestDetail />} />
+            <Route path="/match/:id/problem/:problemId" element={<ProblemDetail />} />
             <Route path="/tickets" element={<Tickets />} />
             <Route path="/tickets/new" element={<CreateTicket />} />
             <Route path="/tickets/:id" element={<TicketDetail />} />
@@ -161,7 +163,10 @@ function App() {
             <Route path="/users/:username/following" element={<FollowList />} />
             <Route path="/teams" element={<Teams />} />
             <Route path="/teams/new" element={<CreateTeam />} />
-            <Route path="/teams/:slug" element={<TeamDetail />} />
+            <Route path="/team/:teamId" element={<TeamDetail />} />
+            <Route path="/team/:teamId/problem/:problemId" element={<ProblemDetail />} />
+            <Route path="/team/:teamId/match/:matchId" element={<ContestDetail />} />
+            <Route path="/team/:teamId/match/:matchId/problem/:problemId" element={<ProblemDetail />} />
             <Route path="/blogs" element={<Blogs />} />
             <Route path="/blogs/:id" element={<BlogDetail />} />
             <Route path="/blog/write" element={<BlogEditor />} />

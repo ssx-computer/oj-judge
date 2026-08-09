@@ -296,7 +296,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
             <NavLink to="/problems" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
               <Target size={16} />{t('nav.problems')}
             </NavLink>
-            <NavLink to="/contests" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            <NavLink to="/matches" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
               <Swords size={16} />{t('nav.contests')}
             </NavLink>
             <NavLink to="/rankings" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
@@ -427,7 +427,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
             <NavLink to="/problems" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMobileMenuOpen(false)}>
               <Target size={16} /> {t('nav.problems')}
             </NavLink>
-            <NavLink to="/contests" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMobileMenuOpen(false)}>
+            <NavLink to="/matches" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMobileMenuOpen(false)}>
               <Swords size={16} /> {t('nav.contests')}
             </NavLink>
             <NavLink to="/rankings" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMobileMenuOpen(false)}>

@@ -30,7 +30,10 @@ export function paginate(page: number, pageSize: number, total: number) {
  * Parse page/pageSize from query params with sensible defaults and bounds.
  */
 export function escapeLikeWildcard(input: string): string {
-  return input.replace(/[%_]/g, '\\$&');
+  // Escape backslashes FIRST, then wildcards. Otherwise crafted input like
+  // `\%` keeps a literal backslash that un-escapes `%`/`_` in the SQL LIKE.
+  const escapedBackslashes = input.replace(/\\/g, '\\\\');
+  return escapedBackslashes.replace(/[%_]/g, '\\$&');
 }
 
 export function parsePagination(

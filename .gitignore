@@ -7,3 +7,8 @@ frontend/pnpm-lock.yaml
 backend/.env
 .env
 __pycache__/
+.atomcode
+.claude
+.vscode
+.idea
+backend/.wrangler

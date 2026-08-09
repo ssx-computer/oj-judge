@@ -25,7 +25,15 @@ import './ProblemDetail.css';
 const DRAFT_KEY = (slug: string, lang: string) => `draft:${slug}:${lang}`;
 
 export default function ProblemDetail() {
-  const { slug } = useParams<{ slug: string }>();
+  const { slug, problemId, teamId, id: matchId } = useParams<{ slug?: string; problemId?: string; teamId?: string; id?: string }>();
+  // 上下文:公开比赛题 /match/:id/problem/:problemId → matchId+problemId
+  //        团队私有题 /team/:teamId/problem/:problemId → teamId+problemId
+  //        团队比赛题 /team/:teamId/match/:matchId/problem/:problemId → teamId+matchId+problemId
+  const isTeamProblem = !!teamId && !!problemId && !matchId;
+  const isTeamContestProblem = !!teamId && !!matchId && !!problemId;
+  const isContestProblem = !!matchId && !!problemId && !teamId;
+  const problemKey = slug || problemId || '';
+  const draftKey = slug || `p${problemId || matchId}`;
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
@@ -47,7 +55,7 @@ export default function ProblemDetail() {
   const [nextProblem, setNextProblem] = useState<any>(null);
   const [relatedProblems, setRelatedProblems] = useState<any[]>([]);
   const [problemLanguages, setProblemLanguages] = useState<any[]>([]);
-  useDocumentTitle(problem?.title);
+  useDocumentTitle(problem?.title, problem?.description ? problem.description.slice(0, 150) : undefined);
 
   // ── Tab state ──
   const [activeTab, setActiveTab] = useState<'description' | 'solutions' | 'discussions' | 'notes'>('description');
@@ -107,14 +115,26 @@ export default function ProblemDetail() {
   // ── Fetch problem on slug change (Bug 8 fix: separate effects) ──
 
   useEffect(() => {
-    if (!slug) return;
+    if (!problemKey) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    api.getProblem(slug)
-      .then((data) => {
+    let problemPromise;
+    if (isContestProblem && matchId && problemId) {
+      problemPromise = api.getContestProblem(matchId, problemId);
+    } else if (isTeamProblem && teamId && problemId) {
+      problemPromise = api.getTeamProblem(Number(teamId), Number(problemId));
+    } else if (isTeamContestProblem && teamId && matchId && problemId) {
+      problemPromise = api.getTeamContestProblem(Number(teamId), Number(matchId), Number(problemId));
+    } else if (slug) {
+      problemPromise = api.getProblem(slug);
+    } else {
+      return;
+    }
+    problemPromise
+      .then((data: any) => {
         if (!isMountedRef.current) return;
         setProblem(data.problem);
-        setSampleTestcases(data.sampleTestcases);
+        setSampleTestcases(data.sampleTestcases || []);
         setStats(data.stats);
         setLoadError('');
       })
@@ -126,20 +146,21 @@ export default function ProblemDetail() {
         if (isMountedRef.current) setLoading(false);
       });
 
-    // Fetch related problems
-    api.getRelatedProblems(slug)
-      .then((data) => {
-        if (isMountedRef.current) setRelatedProblems(data.problems || []);
-      })
-      .catch(() => {});
+    // 关联题目/语言分布仅对公共题目有意义
+    if (!isContestProblem && !isTeamProblem && !isTeamContestProblem && slug) {
+      api.getRelatedProblems(slug)
+        .then((data) => {
+          if (isMountedRef.current) setRelatedProblems(data.problems || []);
+        })
+        .catch(() => {});
 
-    // Fetch language distribution
-    api.getProblemLanguages(slug)
-      .then((data) => {
-        if (isMountedRef.current) setProblemLanguages(data.languages || []);
-      })
-      .catch(() => {});
-  }, [slug]);
+      api.getProblemLanguages(slug)
+        .then((data) => {
+          if (isMountedRef.current) setProblemLanguages(data.languages || []);
+        })
+        .catch(() => {});
+    }
+  }, [problemKey, slug, problemId, teamId, matchId, isContestProblem, isTeamProblem, isTeamContestProblem]);
 
   // ── Fetch user-specific data when user + problem are available ──
 
@@ -337,11 +358,11 @@ export default function ProblemDetail() {
   // ── Restore draft from localStorage (Bug 6 fix) ──
 
   useEffect(() => {
-    if (!slug) return;
-    const savedDraft = localStorage.getItem(DRAFT_KEY(slug, language));
+    if (!draftKey) return;
+    const savedDraft = localStorage.getItem(DRAFT_KEY(draftKey, language));
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSourceCode(savedDraft || LANGUAGE_TEMPLATES[language] || '');
-  }, [slug, language]);
+  }, [draftKey, language]);
 
   // ── Auto-save draft to localStorage (Bug 6 fix) ──
 
@@ -351,11 +372,11 @@ export default function ProblemDetail() {
     setSourceCode(value);
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      if (slug) {
-        localStorage.setItem(DRAFT_KEY(slug, language), value);
+      if (draftKey) {
+        localStorage.setItem(DRAFT_KEY(draftKey, language), value);
       }
     }, 500);
-  }, [slug, language]);
+  }, [draftKey, language]);
 
   // ── Cleanup on unmount (Bug 2 fix) ──
 
@@ -496,11 +517,13 @@ export default function ProblemDetail() {
         source_code: sourceCode,
         captcha_uuid: captchaEnabled ? captchaUuid : undefined,
         captcha_answer: captchaEnabled ? captchaAnswer.trim() : undefined,
+        contest_id: isContestProblem && matchId ? Number(matchId) : undefined,
+        team_contest_id: isTeamContestProblem && matchId ? Number(matchId) : undefined,
       });
       setLastSubmissionId(result.submission_id);
       pollSubmission(result.submission_id);
       // Clear draft after successful submission (Bug 6 fix)
-      if (slug) localStorage.removeItem(DRAFT_KEY(slug, language));
+      if (draftKey) localStorage.removeItem(DRAFT_KEY(draftKey, language));
       // Reset captcha after successful submission
       if (captchaEnabled) {
         setCaptchaAnswer('');
@@ -525,7 +548,7 @@ export default function ProblemDetail() {
     } finally {
       if (isMountedRef.current) setSubmitting(false);
     }
-  }, [user, navigate, problem, submitting, settingsLoaded, addToast, captchaEnabled, captchaAnswer, language, sourceCode, captchaUuid, slug, pollSubmission]);
+  }, [user, navigate, problem, submitting, settingsLoaded, addToast, captchaEnabled, captchaAnswer, language, sourceCode, captchaUuid, problemKey, matchId, isContestProblem, isTeamContestProblem, pollSubmission]);
 
   // ── AI code completion ──
 
@@ -621,14 +644,11 @@ export default function ProblemDetail() {
         <AlertCircle size={48} style={{ color: 'var(--text-secondary)', opacity: 0.4 }} />
         <h2>{loadError || t('problemDetail.problemNotFound')}</h2>
         <div style={{ display: 'flex', gap: '8px' }}>
-          {loadError && slug && (
+          {loadError && problemKey && (
             <button className="btn btn-secondary" onClick={() => {
               setLoadError('');
               setLoading(true);
-              api.getProblem(slug)
-                .then(d => { setProblem(d.problem); setSampleTestcases(d.sampleTestcases); setStats(d.stats); })
-                .catch(e => setLoadError(e.message || t('problemDetail.loadError')))
-                .finally(() => setLoading(false));
+              window.location.reload();
             }}>
               {t('common.retry')}
             </button>

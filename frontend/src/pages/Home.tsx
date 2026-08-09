@@ -151,7 +151,7 @@ export default function Home() {
               <span className="stat-label">{t('nav.problems')}</span>
               <ChevronRight size={14} className="stat-arrow" />
             </Link>
-            <Link to="/contests" className="home-stat-card">
+            <Link to="/matches" className="home-stat-card">
               <Swords size={20} />
               <span className="stat-label">{t('nav.contests')}</span>
               <ChevronRight size={14} className="stat-arrow" />
@@ -287,7 +287,7 @@ export default function Home() {
         <div className="home-card">
           <div className="home-card-header">
             <h2><Swords size={18} /> {t('home.recentContests')}</h2>
-            <Link to="/contests" className="home-card-more">{t('home.viewAll')} <ChevronRight size={14} /></Link>
+            <Link to="/matches" className="home-card-more">{t('home.viewAll')} <ChevronRight size={14} /></Link>
           </div>
           <div className="home-card-body">
             {recentContests.length === 0 ? (
@@ -296,7 +296,7 @@ export default function Home() {
               recentContests.map((c: any) => {
                 const status = getContestStatus(c);
                 return (
-                  <Link key={c.id} to={`/contests/${c.id}`} className="home-item">
+                  <Link key={c.id} to={`/match/${c.id}`} className="home-item">
                     <span className="home-item-title">{c.title}</span>
                     <span className={`home-item-status status-${status}`}>
                       {getContestStatusLabel(status)}

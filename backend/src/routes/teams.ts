@@ -2,6 +2,11 @@ import { Hono } from 'hono';
 import { AppType } from '../types';
 import { authMiddleware, adminMiddleware, isAdmin } from '../middleware/auth';
 import { escapeLikeWildcard } from '../utils/helpers';
+import { validateSlug } from '../utils/validator';
+import { fetchTestcases, saveTestcases, deleteTestcases } from '../utils/github-testcases';
+import { fetchSpjCode, saveSpjCode, deleteSpjCode } from '../utils/github-spj';
+
+const VALID_SPJ_LANGUAGES = ['python', 'cpp', 'java', 'javascript', 'c', 'go', 'rust'];
 
 const teams = new Hono<AppType>();
 
@@ -68,16 +73,17 @@ teams.get('/', async (c) => {
 // 团队详情
 // ============================================================
 
-// GET /teams/:slug — 团队详情
+// GET /teams/:slug 或 /teams/:id — 团队详情(支持 slug 或数字 id)
 teams.get('/:slug', async (c) => {
   const slug = c.req.param('slug');
   const currentUser = c.get('user');
 
+  const isNumeric = /^\d+$/.test(slug);
   const team = await c.env.DB.prepare(
     `SELECT t.*, u.username as owner_name,
        (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id = t.id) as member_count
-     FROM teams t JOIN users u ON t.owner_id = u.id WHERE t.slug = ?`
-  ).bind(slug).first();
+     FROM teams t JOIN users u ON t.owner_id = u.id WHERE ${isNumeric ? 't.id' : 't.slug'} = ?`
+  ).bind(isNumeric ? parseInt(slug) : slug).first();
 
   if (!team) {
     return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
@@ -263,9 +269,13 @@ teams.get('/:id/members', async (c) => {
   }
 
   const members = await c.env.DB.prepare(
-    `SELECT tm.id, tm.user_id, tm.role, tm.joined_at, u.username, u.avatar_url,
+    `SELECT tm.id, tm.user_id, tm.role, tm.joined_at, tm.note, tm.group_id,
+            tm.can_edit_problems, tm.can_edit_contests, tm.can_edit_lists,
+            g.name as group_name, u.username, u.avatar_url,
        (SELECT COUNT(*) FROM submissions s WHERE s.user_id = tm.user_id AND s.status = 'accepted') as accepted_count
-     FROM team_members tm JOIN users u ON tm.user_id = u.id
+     FROM team_members tm
+     LEFT JOIN team_groups g ON g.id = tm.group_id
+     JOIN users u ON tm.user_id = u.id
      WHERE tm.team_id = ? ORDER BY
        CASE tm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
        tm.joined_at ASC`
@@ -891,7 +901,7 @@ teams.get('/:id/problem-sets', async (c) => {
   });
 });
 
-// POST /teams/:id/problem-sets — 创建题目集
+// POST /teams/:id/problem-sets — 创建题目集(owner/admin 或题单子权限)
 teams.post('/:id/problem-sets', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
@@ -902,8 +912,8 @@ teams.post('/:id/problem-sets', authMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'title is required', code: 'BAD_REQUEST' } }, 400);
   }
 
-  if (!await isTeamMember(c.env.DB, id, user.userId)) {
-    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  if (!await canManageLists(c.env.DB, id, user.userId)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires list management permission', code: 'FORBIDDEN' } }, 403);
   }
 
   const result = await c.env.DB.prepare(
@@ -987,7 +997,8 @@ teams.delete('/:id/problem-sets/:setId', authMiddleware, async (c) => {
   }
 
   const team = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
-  if ((problemSet as any).user_id !== user.userId && !isTeamOwnerOrAdmin(team, user.userId, user)) {
+  const isCreator = (problemSet as any).user_id === user.userId;
+  if (!isCreator && !isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageLists(c.env.DB, id, user.userId))) {
     return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
   }
 
@@ -995,7 +1006,7 @@ teams.delete('/:id/problem-sets/:setId', authMiddleware, async (c) => {
   return c.json({ success: true, data: { message: 'Problem set deleted' } });
 });
 
-// POST /teams/:id/problem-sets/:setId/items — 添加题目到题目集
+// POST /teams/:id/problem-sets/:setId/items — 添加题目到题目集(owner/admin 或题单子权限)
 teams.post('/:id/problem-sets/:setId/items', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
@@ -1007,8 +1018,8 @@ teams.post('/:id/problem-sets/:setId/items', authMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'problem_id is required', code: 'BAD_REQUEST' } }, 400);
   }
 
-  if (!await isTeamMember(c.env.DB, id, user.userId)) {
-    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  if (!await canManageLists(c.env.DB, id, user.userId)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires list management permission', code: 'FORBIDDEN' } }, 403);
   }
 
   try {
@@ -1024,15 +1035,15 @@ teams.post('/:id/problem-sets/:setId/items', authMiddleware, async (c) => {
   }
 });
 
-// DELETE /teams/:id/problem-sets/:setId/items/:itemId — 从题目集移除题目
+// DELETE /teams/:id/problem-sets/:setId/items/:itemId — 从题目集移除题目(owner/admin 或题单子权限)
 teams.delete('/:id/problem-sets/:setId/items/:itemId', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
   const setId = parseInt(c.req.param('setId') || '0');
   const itemId = parseInt(c.req.param('itemId') || '0');
 
-  if (!await isTeamMember(c.env.DB, id, user.userId)) {
-    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  if (!await canManageLists(c.env.DB, id, user.userId)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires list management permission', code: 'FORBIDDEN' } }, 403);
   }
 
   await c.env.DB.prepare(
@@ -1096,7 +1107,7 @@ teams.get('/:id/contests', async (c) => {
   });
 });
 
-// POST /teams/:id/contests — 创建竞赛
+// POST /teams/:id/contests — 创建竞赛(owner/admin 或比赛子权限)
 teams.post('/:id/contests', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
@@ -1111,13 +1122,8 @@ teams.post('/:id/contests', authMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
   }
 
-  const team = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
-  if (!team) {
-    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
-  }
-
-  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
-    return c.json({ success: false, error: { message: 'Forbidden: only owner/admin can create contests', code: 'FORBIDDEN' } }, 403);
+  if (!await canManageContests(c.env.DB, id, user.userId)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires contest management permission', code: 'FORBIDDEN' } }, 403);
   }
 
   const now = new Date().toISOString();
@@ -1133,7 +1139,7 @@ teams.post('/:id/contests', authMiddleware, async (c) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     id, user.userId, title, description || '', start_time, end_time,
-    scoring_type === 'ioi' ? 'ioi' : 'acm',
+    scoring_type === 'oi' ? 'oi' : scoring_type === 'ioi' ? 'ioi' : 'icpc',
     is_public ? 1 : 0, status
   ).run();
 
@@ -1155,20 +1161,30 @@ teams.get('/:id/contests/:contestId', async (c) => {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
 
-  const problems = await c.env.DB.prepare(
+  const currentUser = c.get('user');
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  const isManager = team && isTeamOwnerOrAdmin(team, currentUser?.userId, currentUser);
+  const userIsMember = currentUser ? await isTeamMember(c.env.DB, id, currentUser.userId) : false;
+
+  // 比赛前题目不可见:未开始仅主办方可见题目;运行中仅团队成员可见题目
+  const status = (contest as any).status;
+  let problemsVisible = true;
+  if (status === 'pending' && !isManager) problemsVisible = false;
+  if (status === 'running' && !userIsMember && !isManager) problemsVisible = false;
+
+  const problems = problemsVisible ? await c.env.DB.prepare(
     `SELECT tcp.id, tcp.problem_id, tcp.sort_order, tcp.score,
        p.title, p.slug, p.difficulty
      FROM team_contest_problems tcp
      JOIN problems p ON tcp.problem_id = p.id
      WHERE tcp.team_contest_id = ?
      ORDER BY tcp.sort_order ASC, tcp.id ASC`
-  ).bind(contestId).all();
+  ).bind(contestId).all() : { results: [] };
 
   const participantCount = await c.env.DB.prepare(
     'SELECT COUNT(*) as cnt FROM team_contest_participants WHERE team_contest_id = ?'
   ).bind(contestId).first();
 
-  const currentUser = c.get('user');
   let isRegistered = false;
   if (currentUser) {
     const reg = await c.env.DB.prepare(
@@ -1184,6 +1200,7 @@ teams.get('/:id/contests/:contestId', async (c) => {
       problems: problems.results,
       participant_count: (participantCount as any)?.cnt || 0,
       is_registered: isRegistered,
+      problems_visible: problemsVisible ? 1 : 0,
     },
   });
 });
@@ -1219,6 +1236,62 @@ teams.post('/:id/contests/:contestId/register', authMiddleware, async (c) => {
   }
 });
 
+// GET /teams/:id/contests/:contestId/problems/:problemId — 团队比赛单题详情
+// 未开始仅主办方可见;运行中仅团队成员可见(与比赛详情一致)
+teams.get('/:id/contests/:contestId/problems/:problemId', async (c) => {
+  const id = parseInt(c.req.param('id') || '0');
+  const contestId = parseInt(c.req.param('contestId') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+
+  const contest: any = await c.env.DB.prepare(
+    'SELECT id, status FROM team_contests WHERE id = ? AND team_id = ?'
+  ).bind(contestId, id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const currentUser = c.get('user');
+  if (!currentUser) {
+    return c.json({ success: false, error: { message: 'Unauthorized', code: 'UNAUTHORIZED' } }, 401);
+  }
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  const isManager = team && isTeamOwnerOrAdmin(team, currentUser.userId, currentUser);
+  const userIsMember = await isTeamMember(c.env.DB, id, currentUser.userId);
+
+  const status = (contest as any).status;
+  if (status === 'pending' && !isManager) {
+    return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
+  }
+  if (status === 'running' && !userIsMember && !isManager) {
+    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const problem: any = await c.env.DB.prepare(
+    `SELECT tcp.id as contest_problem_id, tcp.sort_order, tcp.score, p.*
+     FROM team_contest_problems tcp
+     JOIN problems p ON tcp.problem_id = p.id
+     WHERE tcp.team_contest_id = ? AND tcp.problem_id = ?`
+  ).bind(contestId, problemId).first();
+
+  if (!problem) {
+    return c.json({ success: false, error: { message: 'Problem not found in this contest', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 样例测试数据(与全局题目一致,仅返回 is_sample)
+  let sampleTestcases: any[] = [];
+  try {
+    const all = await fetchTestcases(c.env, problem.slug);
+    sampleTestcases = all.filter((tc) => tc.is_sample);
+  } catch { /* ignore */ }
+
+  const responseData: any = { problem, sampleTestcases };
+  if (problem.judge_type === 'spj' && problem.spj_language) {
+    responseData.spj_code = await fetchSpjCode(c.env, problem.slug, problem.spj_language);
+  }
+
+  return c.json({ success: true, data: responseData });
+});
+
 // GET /teams/:id/contests/:contestId/rankings — 竞赛排行榜
 teams.get('/:id/contests/:contestId/rankings', async (c) => {
   const id = parseInt(c.req.param('id') || '0');
@@ -1249,9 +1322,9 @@ teams.get('/:id/contests/:contestId/rankings', async (c) => {
       for (const prob of problems.results as any[]) {
         const best: any = await c.env.DB.prepare(
           `SELECT status, score, time_used, created_at FROM submissions
-           WHERE user_id = ? AND problem_id = ? AND status IN ('accepted','wrong_answer','time_limit_exceeded')
+           WHERE user_id = ? AND problem_id = ? AND team_contest_id = ? AND status IN ('accepted','wrong_answer','time_limit_exceeded')
            ORDER BY CASE WHEN status = 'accepted' THEN 0 ELSE 1 END, created_at ASC LIMIT 1`
-        ).bind(p.user_id, prob.problem_id).first();
+        ).bind(p.user_id, prob.problem_id, contestId).first();
 
         if (best) {
           const probScore = best.status === 'accepted' ? (prob.score || 100) : 0;
@@ -1289,7 +1362,7 @@ teams.get('/:id/contests/:contestId/rankings', async (c) => {
   });
 });
 
-// POST /teams/:id/contests/:contestId/problems — 添加题目到竞赛
+// POST /teams/:id/contests/:contestId/problems — 添加题目到竞赛(owner/admin 或比赛子权限)
 teams.post('/:id/contests/:contestId/problems', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
@@ -1305,8 +1378,8 @@ teams.post('/:id/contests/:contestId/problems', authMiddleware, async (c) => {
   if (!team) {
     return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
   }
-  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
-    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageContests(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires contest management permission', code: 'FORBIDDEN' } }, 403);
   }
 
   try {
@@ -1333,8 +1406,8 @@ teams.delete('/:id/contests/:contestId/problems/:problemId', authMiddleware, asy
   if (!team) {
     return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
   }
-  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
-    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageContests(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires contest management permission', code: 'FORBIDDEN' } }, 403);
   }
 
   await c.env.DB.prepare(
@@ -1342,6 +1415,721 @@ teams.delete('/:id/contests/:contestId/problems/:problemId', authMiddleware, asy
   ).bind(contestId, problemId).run();
 
   return c.json({ success: true, data: { message: 'Problem removed from contest' } });
+});
+
+// ============================================================
+// 团队比赛公告
+// ============================================================
+
+// GET /teams/:id/contests/:contestId/announcements — 公告列表(团队成员可见)
+teams.get('/:id/contests/:contestId/announcements', async (c) => {
+  const id = parseInt(c.req.param('id') || '0');
+  const contestId = parseInt(c.req.param('contestId') || '0');
+
+  const contest: any = await c.env.DB.prepare(
+    'SELECT id FROM team_contests WHERE id = ? AND team_id = ?'
+  ).bind(contestId, id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const currentUser = c.get('user');
+  const userIsMember = currentUser ? await isTeamMember(c.env.DB, id, currentUser.userId) : false;
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!userIsMember && !isTeamOwnerOrAdmin(team, currentUser?.userId, currentUser)) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const results = await c.env.DB.prepare(
+    `SELECT a.id, a.title, a.content, a.is_pinned, a.created_at, a.updated_at,
+            u.id as user_id, u.username
+     FROM team_contest_announcements a JOIN users u ON a.user_id = u.id
+     WHERE a.team_contest_id = ?
+     ORDER BY a.is_pinned DESC, a.created_at DESC`
+  ).bind(contestId).all();
+
+  return c.json({ success: true, data: { announcements: results.results } });
+});
+
+// POST /teams/:id/contests/:contestId/announcements — 发布公告(owner/admin 或比赛子权限)
+teams.post('/:id/contests/:contestId/announcements', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const contestId = parseInt(c.req.param('contestId') || '0');
+  const body = await c.req.json();
+  const { title, content, is_pinned } = body;
+
+  if (!title || !content) {
+    return c.json({ success: false, error: { message: 'title and content are required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const contest: any = await c.env.DB.prepare(
+    'SELECT id FROM team_contests WHERE id = ? AND team_id = ?'
+  ).bind(contestId, id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageContests(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires contest management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const result = await c.env.DB.prepare(
+    'INSERT INTO team_contest_announcements (team_contest_id, user_id, title, content, is_pinned) VALUES (?, ?, ?, ?, ?)'
+  ).bind(contestId, user.userId, title, content, is_pinned ? 1 : 0).run();
+
+  return c.json({ success: true, data: { id: result.meta.last_row_id, message: 'Announcement published' } }, 201);
+});
+
+// DELETE /teams/:id/contests/:contestId/announcements/:announcementId — 删除公告(owner/admin 或比赛子权限)
+teams.delete('/:id/contests/:contestId/announcements/:announcementId', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const contestId = parseInt(c.req.param('contestId') || '0');
+  const announcementId = parseInt(c.req.param('announcementId') || '0');
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageContests(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires contest management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const announcement: any = await c.env.DB.prepare(
+    'SELECT id FROM team_contest_announcements WHERE id = ? AND team_contest_id = ?'
+  ).bind(announcementId, contestId).first();
+  if (!announcement) {
+    return c.json({ success: false, error: { message: 'Announcement not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.prepare('DELETE FROM team_contest_announcements WHERE id = ? AND team_contest_id = ?')
+    .bind(announcementId, contestId).run();
+
+  return c.json({ success: true, data: { message: 'Announcement deleted' } });
+});
+
+// ============================================================
+// 团队比赛私密答疑
+// ============================================================
+
+// GET /teams/:id/contests/:contestId/clarifications — 答疑列表
+// 选手只能看到自己的提问;主办方/管理员可看到全部
+teams.get('/:id/contests/:contestId/clarifications', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const contestId = parseInt(c.req.param('contestId') || '0');
+
+  const contest: any = await c.env.DB.prepare(
+    'SELECT id FROM team_contests WHERE id = ? AND team_id = ?'
+  ).bind(contestId, id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  const isManager = team && isTeamOwnerOrAdmin(team, user.userId, user);
+  const userIsMember = await isTeamMember(c.env.DB, id, user.userId);
+  if (!userIsMember && !isManager) {
+    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  }
+
+  let query = `SELECT cl.id, cl.team_contest_id, cl.user_id, cl.question, cl.answer, cl.status,
+                      cl.created_at, cl.answered_at, u.username
+               FROM team_contest_clarifications cl JOIN users u ON cl.user_id = u.id
+               WHERE cl.team_contest_id = ?`;
+  const binds: any[] = [contestId];
+  if (!isManager) {
+    query += ' AND cl.user_id = ?';
+    binds.push(user.userId);
+  }
+  query += ' ORDER BY cl.created_at DESC';
+
+  const results = await c.env.DB.prepare(query).bind(...binds).all();
+
+  return c.json({ success: true, data: { clarifications: results.results } });
+});
+
+// POST /teams/:id/contests/:contestId/clarifications — 成员提交提问(仅团队成员)
+teams.post('/:id/contests/:contestId/clarifications', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const contestId = parseInt(c.req.param('contestId') || '0');
+  const body = await c.req.json();
+  const { question } = body;
+
+  if (!question || !question.trim()) {
+    return c.json({ success: false, error: { message: 'question is required', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (question.length > 2000) {
+    return c.json({ success: false, error: { message: 'question must be at most 2000 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const contest: any = await c.env.DB.prepare(
+    'SELECT id, status FROM team_contests WHERE id = ? AND team_id = ?'
+  ).bind(contestId, id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if ((contest as any).status === 'pending') {
+    return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
+  }
+
+  if (!await isTeamMember(c.env.DB, id, user.userId)) {
+    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const result = await c.env.DB.prepare(
+    'INSERT INTO team_contest_clarifications (team_contest_id, user_id, question) VALUES (?, ?, ?)'
+  ).bind(contestId, user.userId, question.trim()).run();
+
+  return c.json({ success: true, data: { id: result.meta.last_row_id, message: 'Question submitted' } }, 201);
+});
+
+// PUT /teams/:id/contests/:contestId/clarifications/:clarificationId — 主办方回答
+teams.put('/:id/contests/:contestId/clarifications/:clarificationId', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const contestId = parseInt(c.req.param('contestId') || '0');
+  const clarificationId = parseInt(c.req.param('clarificationId') || '0');
+  const body = await c.req.json();
+
+  if (!body.answer || !body.answer.trim()) {
+    return c.json({ success: false, error: { message: 'answer is required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageContests(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires contest management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const clarification: any = await c.env.DB.prepare(
+    'SELECT id FROM team_contest_clarifications WHERE id = ? AND team_contest_id = ?'
+  ).bind(clarificationId, contestId).first();
+  if (!clarification) {
+    return c.json({ success: false, error: { message: 'Clarification not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE team_contest_clarifications SET answer = ?, answered_by = ?, status = 'answered', answered_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND team_contest_id = ?`
+  ).bind(body.answer.trim(), user.userId, clarificationId, contestId).run();
+
+  return c.json({ success: true, data: { message: 'Answer submitted' } });
+});
+
+// ============================================================
+// 团队私有题目
+// ============================================================
+
+// 判断成员是否有指定资源的团队管理权限(owner/admin 或对应子权限位)
+async function canManageTeamResource(db: D1Database, teamId: number, userId: number, permColumn: string): Promise<boolean> {
+  const team: any = await db.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(teamId).first();
+  if (team && (team.owner_id === userId || isAdmin({ userId } as any))) return true;
+  const row: any = await db.prepare(
+    `SELECT ${permColumn} FROM team_members WHERE team_id = ? AND user_id = ?`
+  ).bind(teamId, userId).first();
+  return !!(row && row[permColumn] === 1);
+}
+
+function canManageProblems(db: D1Database, teamId: number, userId: number): Promise<boolean> {
+  return canManageTeamResource(db, teamId, userId, 'can_edit_problems');
+}
+
+function canManageContests(db: D1Database, teamId: number, userId: number): Promise<boolean> {
+  return canManageTeamResource(db, teamId, userId, 'can_edit_contests');
+}
+
+function canManageLists(db: D1Database, teamId: number, userId: number): Promise<boolean> {
+  return canManageTeamResource(db, teamId, userId, 'can_edit_lists');
+}
+
+// GET /teams/:id/problems — 私有题目列表(仅成员可见)
+teams.get('/:id/problems', async (c) => {
+  const id = parseInt(c.req.param('id') || '0');
+  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
+  const pageSize = Math.min(50, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
+  const search = c.req.query('search');
+  const offset = (page - 1) * pageSize;
+
+  const currentUser = c.get('user');
+  if (!currentUser) {
+    return c.json({ success: false, error: { message: 'Unauthorized', code: 'UNAUTHORIZED' } }, 401);
+  }
+  if (!await isTeamMember(c.env.DB, id, currentUser.userId)) {
+    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  }
+
+  let whereClause = 'WHERE tp.team_id = ?';
+  const binds: any[] = [id];
+  if (search) {
+    whereClause += ' AND (p.title LIKE ? OR p.slug LIKE ?)';
+    binds.push(`%${escapeLikeWildcard(search)}%`, `%${escapeLikeWildcard(search)}%`);
+  }
+
+  const countResult = await c.env.DB.prepare(
+    `SELECT COUNT(*) as total FROM team_problems tp JOIN problems p ON tp.problem_id = p.id ${whereClause}`
+  ).bind(...binds).first();
+  const total = (countResult as any)?.total || 0;
+
+  const results = await c.env.DB.prepare(
+    `SELECT p.id, p.title, p.slug, p.difficulty, p.tags, p.time_limit, p.memory_limit,
+            p.judge_type, p.created_at, tp.added_by, u.username as added_by_name
+     FROM team_problems tp
+     JOIN problems p ON tp.problem_id = p.id
+     JOIN users u ON tp.added_by = u.id
+     ${whereClause}
+     ORDER BY p.created_at DESC LIMIT ? OFFSET ?`
+  ).bind(...binds, pageSize, offset).all();
+
+  return c.json({
+    success: true,
+    data: {
+      problems: results.results,
+      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    },
+  });
+});
+
+// POST /teams/:id/problems — 创建私有题目(is_public=0 + team_problems 关联,测试数据存 GitHub)
+teams.post('/:id/problems', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const body = await c.req.json();
+  const { title, slug, description, input_format, output_format, time_limit, memory_limit, tags, difficulty, testcases, judge_type, spj_language, spj_code } = body;
+
+  if (!title || !slug || !description) {
+    return c.json({ success: false, error: { message: 'title, slug, and description are required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const slugError = validateSlug(slug);
+  if (slugError) {
+    return c.json({ success: false, error: { message: slugError, code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageProblems(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires problem management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const effectiveJudgeType = judge_type || 'default';
+  if (effectiveJudgeType === 'spj') {
+    if (!spj_language || !VALID_SPJ_LANGUAGES.includes(spj_language)) {
+      return c.json({ success: false, error: { message: `spj_language is required and must be one of: ${VALID_SPJ_LANGUAGES.join(', ')}`, code: 'BAD_REQUEST' } }, 400);
+    }
+  }
+
+  try {
+    const result = await c.env.DB.prepare(
+      `INSERT INTO problems (title, slug, description, input_format, output_format, time_limit, memory_limit, tags, difficulty, is_public, judge_type, spj_language)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+    ).bind(
+      title, slug, description, input_format || null, output_format || null,
+      time_limit || 1000, memory_limit || 256, JSON.stringify(tags || []),
+      difficulty || 'Easy', effectiveJudgeType, effectiveJudgeType === 'spj' ? spj_language : null
+    ).run();
+
+    const problemId = result.meta.last_row_id;
+
+    await c.env.DB.prepare(
+      'INSERT INTO team_problems (team_id, problem_id, added_by) VALUES (?, ?, ?)'
+    ).bind(id, problemId, user.userId).run();
+
+    // 测试数据与 SPJ 代码仍存 GitHub(复用全局评测管线)
+    if (testcases && Array.isArray(testcases) && testcases.length > 0) {
+      await saveTestcases(c.env, slug, testcases);
+    }
+    if (effectiveJudgeType === 'spj' && spj_code) {
+      await saveSpjCode(c.env, slug, spj_language, spj_code);
+    }
+
+    return c.json({ success: true, data: { id: problemId, message: 'Problem created' } }, 201);
+  } catch (e: any) {
+    if (e.message?.includes('UNIQUE constraint')) {
+      return c.json({ success: false, error: { message: 'Slug already exists', code: 'CONFLICT' } }, 409);
+    }
+    console.error('Team problem create error:', e);
+    return c.json({ success: false, error: { message: 'Failed to create problem', code: 'INTERNAL_ERROR' } }, 500);
+  }
+});
+
+// GET /teams/:id/problems/:problemId — 私有题目详情(仅成员可见,含样例)
+teams.get('/:id/problems/:problemId', async (c) => {
+  const id = parseInt(c.req.param('id') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+
+  const currentUser = c.get('user');
+  if (!currentUser) {
+    return c.json({ success: false, error: { message: 'Unauthorized', code: 'UNAUTHORIZED' } }, 401);
+  }
+  if (!await isTeamMember(c.env.DB, id, currentUser.userId)) {
+    return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const problem: any = await c.env.DB.prepare(
+    `SELECT p.*, tp.added_by, u.username as added_by_name
+     FROM team_problems tp
+     JOIN problems p ON tp.problem_id = p.id
+     JOIN users u ON tp.added_by = u.id
+     WHERE tp.team_id = ? AND tp.problem_id = ?`
+  ).bind(id, problemId).first();
+
+  if (!problem) {
+    return c.json({ success: false, error: { message: 'Problem not found in this team', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const allTestcases = await fetchTestcases(c.env, problem.slug);
+  const sampleTestcases = allTestcases.filter((tc) => tc.is_sample);
+
+  const responseData: any = {
+    problem,
+    sampleTestcases,
+  };
+  if (problem.judge_type === 'spj' && problem.spj_language) {
+    responseData.spj_code = await fetchSpjCode(c.env, problem.slug, problem.spj_language);
+  }
+
+  return c.json({ success: true, data: responseData });
+});
+
+// PUT /teams/:id/problems/:problemId — 编辑私有题目(owner/admin 或题目子权限)
+teams.put('/:id/problems/:problemId', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+  const body = await c.req.json();
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageProblems(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires problem management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const existing: any = await c.env.DB.prepare(
+    `SELECT p.id, p.slug, p.judge_type, p.spj_language FROM team_problems tp
+     JOIN problems p ON tp.problem_id = p.id
+     WHERE tp.team_id = ? AND tp.problem_id = ?`
+  ).bind(id, problemId).first();
+  if (!existing) {
+    return c.json({ success: false, error: { message: 'Problem not found in this team', code: 'NOT_FOUND' } }, 404);
+  }
+
+  if (body.judge_type === 'spj') {
+    const spjLang = body.spj_language || existing.spj_language;
+    if (!spjLang || !VALID_SPJ_LANGUAGES.includes(spjLang)) {
+      return c.json({ success: false, error: { message: `spj_language is required and must be one of: ${VALID_SPJ_LANGUAGES.join(', ')}`, code: 'BAD_REQUEST' } }, 400);
+    }
+  }
+
+  const fields: string[] = [];
+  const values: any[] = [];
+  for (const [key, value] of Object.entries(body)) {
+    if (['title', 'description', 'input_format', 'output_format', 'time_limit', 'memory_limit', 'difficulty'].includes(key)) {
+      fields.push(`${key} = ?`);
+      values.push(value);
+    }
+    if (key === 'tags') {
+      fields.push('tags = ?');
+      values.push(JSON.stringify(value));
+    }
+    if (key === 'judge_type') {
+      fields.push('judge_type = ?');
+      values.push(value);
+    }
+    if (key === 'spj_language') {
+      fields.push('spj_language = ?');
+      values.push(value || null);
+    }
+  }
+  if (fields.length === 0) {
+    return c.json({ success: false, error: { message: 'No fields to update', code: 'BAD_REQUEST' } }, 400);
+  }
+  fields.push("updated_at = datetime('now')");
+  values.push(problemId);
+  await c.env.DB.prepare(`UPDATE problems SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
+
+  // 可选更新测试数据
+  if (body.testcases && Array.isArray(body.testcases)) {
+    await saveTestcases(c.env, existing.slug, body.testcases);
+  }
+  if (body.spj_code && body.judge_type === 'spj') {
+    await saveSpjCode(c.env, existing.slug, body.spj_language || existing.spj_language, body.spj_code);
+  }
+
+  return c.json({ success: true, data: { message: 'Problem updated' } });
+});
+
+// DELETE /teams/:id/problems/:problemId — 删除私有题目(owner/admin 或题目子权限)
+teams.delete('/:id/problems/:problemId', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user) && !(await canManageProblems(c.env.DB, id, user.userId))) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires problem management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const existing: any = await c.env.DB.prepare(
+    `SELECT p.slug, p.judge_type, p.spj_language FROM team_problems tp
+     JOIN problems p ON tp.problem_id = p.id
+     WHERE tp.team_id = ? AND tp.problem_id = ?`
+  ).bind(id, problemId).first();
+  if (!existing) {
+    return c.json({ success: false, error: { message: 'Problem not found in this team', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 清理 GitHub 测试数据/SPJ,再删除关联与题目
+  await deleteTestcases(c.env, existing.slug);
+  if (existing.judge_type === 'spj' && existing.spj_language) {
+    await deleteSpjCode(c.env, existing.slug, existing.spj_language);
+  }
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM team_problems WHERE team_id = ? AND problem_id = ?').bind(id, problemId),
+    c.env.DB.prepare('DELETE FROM submissions WHERE problem_id = ?').bind(problemId),
+    c.env.DB.prepare('DELETE FROM favorites WHERE problem_id = ?').bind(problemId),
+    c.env.DB.prepare('DELETE FROM problems WHERE id = ?').bind(problemId),
+  ]);
+
+  return c.json({ success: true, data: { message: 'Problem deleted' } });
+});
+
+// ============================================================
+// 成员备注、分组、子权限
+// ============================================================
+
+// PUT /teams/:id/members/:userId/note — 设置成员备注(如真实姓名,owner/admin)
+teams.put('/:id/members/:userId/note', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const targetUserId = parseInt(c.req.param('userId') || '0');
+  const body = await c.req.json();
+  const { note } = body;
+
+  if (typeof note !== 'string') {
+    return c.json({ success: false, error: { message: 'note is required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const member = await c.env.DB.prepare(
+    'SELECT id FROM team_members WHERE team_id = ? AND user_id = ?'
+  ).bind(id, targetUserId).first();
+  if (!member) {
+    return c.json({ success: false, error: { message: 'Member not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.prepare('UPDATE team_members SET note = ? WHERE team_id = ? AND user_id = ?')
+    .bind(note, id, targetUserId).run();
+
+  return c.json({ success: true, data: { message: 'Note updated' } });
+});
+
+// GET /teams/:id/groups — 分组列表
+teams.get('/:id/groups', async (c) => {
+  const id = parseInt(c.req.param('id') || '0');
+
+  const team: any = await c.env.DB.prepare('SELECT id, is_public FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const currentUser = c.get('user');
+  const userIsMember = currentUser ? await isTeamMember(c.env.DB, id, currentUser.userId) : false;
+  if (!team.is_public && !userIsMember) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const results = await c.env.DB.prepare(
+    `SELECT g.id, g.name, g.sort_order, g.created_at,
+       (SELECT COUNT(*) FROM team_members tm WHERE tm.group_id = g.id) as member_count
+     FROM team_groups g WHERE g.team_id = ? ORDER BY g.sort_order ASC, g.id ASC`
+  ).bind(id).all();
+
+  return c.json({ success: true, data: { groups: results.results } });
+});
+
+// POST /teams/:id/groups — 创建分组(owner/admin)
+teams.post('/:id/groups', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const body = await c.req.json();
+  const { name, sort_order } = body;
+
+  if (!name || !name.trim()) {
+    return c.json({ success: false, error: { message: 'name is required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const result = await c.env.DB.prepare(
+    'INSERT INTO team_groups (team_id, name, sort_order) VALUES (?, ?, ?)'
+  ).bind(id, name.trim(), sort_order || 0).run();
+
+  return c.json({ success: true, data: { id: result.meta.last_row_id, message: 'Group created' } }, 201);
+});
+
+// PUT /teams/:id/groups/:groupId — 编辑分组(owner/admin)
+teams.put('/:id/groups/:groupId', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const groupId = parseInt(c.req.param('groupId') || '0');
+  const body = await c.req.json();
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const group: any = await c.env.DB.prepare(
+    'SELECT id FROM team_groups WHERE id = ? AND team_id = ?'
+  ).bind(groupId, id).first();
+  if (!group) {
+    return c.json({ success: false, error: { message: 'Group not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE team_groups SET name = COALESCE(?, name), sort_order = COALESCE(?, sort_order) WHERE id = ? AND team_id = ?'
+  ).bind(body.name ?? null, body.sort_order ?? null, groupId, id).run();
+
+  return c.json({ success: true, data: { message: 'Group updated' } });
+});
+
+// DELETE /teams/:id/groups/:groupId — 删除分组(owner/admin;成员自动解除分组)
+teams.delete('/:id/groups/:groupId', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const groupId = parseInt(c.req.param('groupId') || '0');
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const group: any = await c.env.DB.prepare(
+    'SELECT id FROM team_groups WHERE id = ? AND team_id = ?'
+  ).bind(groupId, id).first();
+  if (!group) {
+    return c.json({ success: false, error: { message: 'Group not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE team_members SET group_id = NULL WHERE team_id = ? AND group_id = ?').bind(id, groupId),
+    c.env.DB.prepare('DELETE FROM team_groups WHERE id = ? AND team_id = ?').bind(groupId, id),
+  ]);
+
+  return c.json({ success: true, data: { message: 'Group deleted' } });
+});
+
+// PUT /teams/:id/members/:userId/group — 设置成员分组(owner/admin)
+teams.put('/:id/members/:userId/group', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const targetUserId = parseInt(c.req.param('userId') || '0');
+  const body = await c.req.json();
+  const { group_id } = body;
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const member = await c.env.DB.prepare(
+    'SELECT id FROM team_members WHERE team_id = ? AND user_id = ?'
+  ).bind(id, targetUserId).first();
+  if (!member) {
+    return c.json({ success: false, error: { message: 'Member not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  if (group_id) {
+    const group: any = await c.env.DB.prepare(
+      'SELECT id FROM team_groups WHERE id = ? AND team_id = ?'
+    ).bind(group_id, id).first();
+    if (!group) {
+      return c.json({ success: false, error: { message: 'Group not found', code: 'NOT_FOUND' } }, 404);
+    }
+  }
+
+  await c.env.DB.prepare('UPDATE team_members SET group_id = ? WHERE team_id = ? AND user_id = ?')
+    .bind(group_id || null, id, targetUserId).run();
+
+  return c.json({ success: true, data: { message: 'Group assigned' } });
+});
+
+// PUT /teams/:id/members/:userId/permissions — 授予/收回子权限(owner/admin)
+// 子权限: can_edit_problems(题目管理) / can_edit_contests(比赛管理) / can_edit_lists(题单管理)
+teams.put('/:id/members/:userId/permissions', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const targetUserId = parseInt(c.req.param('userId') || '0');
+  const body = await c.req.json();
+  const { can_edit_problems, can_edit_contests, can_edit_lists } = body;
+
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isTeamOwnerOrAdmin(team, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const member = await c.env.DB.prepare(
+    'SELECT id, role FROM team_members WHERE team_id = ? AND user_id = ?'
+  ).bind(id, targetUserId).first();
+  if (!member) {
+    return c.json({ success: false, error: { message: 'Member not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if ((member as any).role === 'owner') {
+    return c.json({ success: false, error: { message: 'Cannot modify owner permissions', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const updates: string[] = [];
+  const binds: any[] = [];
+  if (can_edit_problems !== undefined) { updates.push('can_edit_problems = ?'); binds.push(can_edit_problems ? 1 : 0); }
+  if (can_edit_contests !== undefined) { updates.push('can_edit_contests = ?'); binds.push(can_edit_contests ? 1 : 0); }
+  if (can_edit_lists !== undefined) { updates.push('can_edit_lists = ?'); binds.push(can_edit_lists ? 1 : 0); }
+  if (updates.length === 0) {
+    return c.json({ success: false, error: { message: 'No permission fields provided', code: 'BAD_REQUEST' } }, 400);
+  }
+  binds.push(id, targetUserId);
+  await c.env.DB.prepare(
+    `UPDATE team_members SET ${updates.join(', ')} WHERE team_id = ? AND user_id = ?`
+  ).bind(...binds).run();
+
+  return c.json({ success: true, data: { message: 'Permissions updated' } });
 });
 
 export default teams;

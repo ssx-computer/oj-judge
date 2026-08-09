@@ -69,7 +69,7 @@ export default function Teams() {
       ) : (
         <div className="teams-grid">
           {teams.map((team) => (
-            <Link key={team.id} to={`/teams/${team.slug}`} className="team-card">
+            <Link key={team.id} to={`/team/${team.id}`} className="team-card">
               {team.avatar_url ? (
                 <img src={team.avatar_url} alt={team.name} className="team-avatar" />
               ) : (

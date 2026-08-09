@@ -101,7 +101,7 @@ export default function AdminTeams() {
             <div key={team.id} className="pm-table-row">
               <span className="pm-col pm-col-id">{team.id}</span>
               <span className="pm-col pm-col-title">
-                <a href={`/teams/${team.slug}`} target="_blank" rel="noopener" className="link">
+                <a href={`/team/${team.id}`} target="_blank" rel="noopener" className="link">
                   {team.name}
                 </a>
                 {team.description && (
@@ -128,7 +128,7 @@ export default function AdminTeams() {
               </span>
               <span className="pm-col" style={{ width: '120px', display: 'flex', gap: 6 }}>
                 <a
-                  href={`/teams/${team.slug}`}
+                  href={`/team/${team.id}`}
                   target="_blank"
                   rel="noopener"
                   className="btn-text-sm"

@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { useToastStore } from '../../store/toast';
 import { t } from '../../i18n';
-import { ChevronLeft, ChevronRight, Search, FileText, Shield, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, FileText, Shield, RefreshCw, Download } from 'lucide-react';
 import '../Admin.css';
 
 export default function AdminAuditLogs() {
@@ -82,6 +82,31 @@ export default function AdminAuditLogs() {
     }
   };
 
+  const exportCSV = () => {
+    if (!logs.length) return;
+    const headers = ['时间', '用户', 'IP', '设备指纹', '操作', '页面', 'User-Agent'];
+    const rows = logs.map((log: any) => [
+      new Date(log.created_at + 'Z').toISOString(),
+      log.username || '',
+      log.ip || '',
+      log.device_fingerprint || '',
+      `${log.method || ''} ${log.action || ''}`.trim(),
+      log.page || '',
+      log.user_agent || '',
+    ]);
+    const csv = [headers, ...rows]
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    // BOM so Excel opens UTF-8 Chinese correctly.
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="admin-page">
       <div className="admin-header">
@@ -129,6 +154,10 @@ export default function AdminAuditLogs() {
         <button className="btn btn-secondary btn-sm" onClick={() => fetchLogs()} title="刷新" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <RefreshCw size={14} className={loading ? 'spin' : ''} />
           刷新
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={exportCSV} title="导出 CSV" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Download size={14} />
+          导出 CSV
         </button>
       </div>
 

@@ -18,6 +18,8 @@ export default function Rankings() {
   const [timeRange, setTimeRange] = useState<'all' | 'week' | 'month'>('all');
   const [mode, setMode] = useState<Mode>('solved');
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<any>(null);
   useDocumentTitle(t('rankings.title'));
 
   const filteredRankings = rankings.filter(u => {
@@ -30,11 +32,13 @@ export default function Rankings() {
     try {
       setLoadError(false);
       if (mode === 'rating') {
-        const data = await api.getRatingLeaderboard({ page: 1, pageSize: 50 });
+        const data = await api.getRatingLeaderboard({ page, pageSize: 50 });
         setRankings(data.rankings);
+        setPagination(data.pagination || null);
       } else {
         const data = await api.getRankings(50, timeRange);
         setRankings(data.rankings);
+        setPagination(null);
       }
     } catch (e) {
       console.error('Failed to fetch rankings:', e);
@@ -42,12 +46,17 @@ export default function Rankings() {
     } finally {
       setLoading(false);
     }
-  }, [mode, timeRange]);
+  }, [mode, timeRange, page]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchRankings();
   }, [fetchRankings]);
+
+  // Reset to the first page when switching mode or time range.
+  useEffect(() => {
+    setPage(1);
+  }, [mode, timeRange]);
 
   const getRankIcon = (rank: number) => {
     if (rank === 1) return <Crown className="rank-icon gold" size={28} />;
@@ -62,6 +71,8 @@ export default function Rankings() {
     if (rank === 3) return 'rank-bronze';
     return '';
   };
+
+  const showPagination = pagination && pagination.totalPages > 1;
 
   if (loading) {
     return <LoadingSpinner message={t('rankings.loadingRankings')} />;
@@ -197,6 +208,23 @@ export default function Rankings() {
               </Link>
             );
           })}
+        </div>
+      )}
+      {showPagination && (
+        <div className="pagination">
+          <button
+            className="page-btn"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >&lt;</button>
+          <span className="page-info">
+            {t('common.page').replace('{0}', String(page)).replace('{1}', String(pagination.totalPages))}
+          </span>
+          <button
+            className="page-btn"
+            disabled={page >= pagination.totalPages}
+            onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
+          >&gt;</button>
         </div>
       )}
     </div>

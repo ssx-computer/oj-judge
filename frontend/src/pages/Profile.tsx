@@ -631,7 +631,7 @@ export default function Profile() {
                 statusClass = 'badge badge-ended';
               }
               return (
-                <Link key={contest.id} to={`/contests/${contest.id}`} className="contest-history-item">
+                <Link key={contest.id} to={`/match/${contest.id}`} className="contest-history-item">
                   <div className="contest-history-info">
                     <div className="contest-history-title">
                       <Swords size={16} />

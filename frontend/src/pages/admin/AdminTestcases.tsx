@@ -6,8 +6,9 @@ import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { DIFFICULTY_COLORS } from '../../constants';
 import { t } from '../../i18n';
 import {
-  Plus, Save, Trash2, X, ChevronUp, ChevronDown, Upload, Download,
+  Plus, Save, Trash2, X, ChevronUp, ChevronDown, Upload, Download, FileArchive,
 } from 'lucide-react';
+import JSZip from 'jszip';
 import '../Admin.css';
 
 export default function AdminTestcases() {
@@ -85,6 +86,36 @@ export default function AdminTestcases() {
     };
     reader.readAsText(file);
     e.target.value = '';
+  };
+
+  const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      const inEntries = Object.entries(zip.files).filter(
+        ([name, entry]) => !entry.dir && /\.in$/i.test(name)
+      );
+      const parsed: { input: string; expected_output: string; is_sample: boolean; score: number }[] = [];
+      for (const [name, entry] of inEntries) {
+        const outName = name.replace(/\.in$/i, '.out');
+        const outEntry = zip.files[outName];
+        if (!outEntry || outEntry.dir) continue;
+        const input = await entry.async('string');
+        const output = await outEntry.async('string');
+        parsed.push({ input, expected_output: output, is_sample: false, score: 10 });
+      }
+      if (parsed.length === 0) {
+        addToast('error', 'ZIP 中未找到有效的 .in/.out 测试数据');
+        return;
+      }
+      setTestcases(parsed);
+      addToast('success', `已从 ZIP 导入 ${parsed.length} 个测试用例`);
+    } catch {
+      addToast('error', 'ZIP 解压失败');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const handleSaveTestcases = async () => {
@@ -353,6 +384,10 @@ export default function AdminTestcases() {
               <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
                 <Upload size={14} /> 批量导入
                 <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleBatchUpload} />
+              </label>
+              <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+                <FileArchive size={14} /> 导入 ZIP
+                <input type="file" accept=".zip" style={{ display: 'none' }} onChange={handleZipImport} />
               </label>
               <button className="btn btn-secondary" onClick={handleAddTestcaseRow}>
                 <Plus size={14} /> {t('admin.addTestcase')}

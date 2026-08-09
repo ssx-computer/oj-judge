@@ -30,7 +30,7 @@ export default function Sidebar({ open, onClose, unreadMsg }: SidebarProps) {
   const mainNav = [
     { to: '/', icon: Home, label: t('nav.home'), end: true },
     { to: '/problems', icon: Target, label: t('nav.problems') },
-    { to: '/contests', icon: Swords, label: t('nav.contests') },
+    { to: '/matches', icon: Swords, label: t('nav.contests') },
     { to: '/rankings', icon: Trophy, label: t('nav.rankings') },
     { to: '/lists', icon: BookOpen, label: t('nav.lists') },
     { to: '/training', icon: GraduationCap, label: t('nav.training') },

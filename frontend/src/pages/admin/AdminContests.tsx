@@ -61,7 +61,7 @@ export default function AdminContests() {
             <div key={c.id} className="pm-table-row">
               <span className="pm-col pm-col-id">{c.id}</span>
               <span className="pm-col pm-col-title">
-                <a href={`/contests/${c.id}`} style={{color:'inherit',textDecoration:'none'}}>{c.title}</a>
+                <a href={`/match/${c.id}`} style={{color:'inherit',textDecoration:'none'}}>{c.title}</a>
               </span>
               <span className="pm-col" style={{width:'100px'}}>
                 <span className={`badge ${c.status === 'running' ? 'badge-success' : c.status === 'upcoming' ? 'badge-info' : 'badge-ended'}`}>
@@ -74,7 +74,7 @@ export default function AdminContests() {
               <span className="pm-col" style={{width:'80px'}}>{c.participant_count ?? 0}</span>
               <span className="pm-col" style={{width:'140px'}}>
                 <div className="admin-row-actions">
-                  <a href={`/contests/${c.id}`} className="btn-text-sm" title={t('admin.viewContest')}>
+                  <a href={`/match/${c.id}`} className="btn-text-sm" title={t('admin.viewContest')}>
                     <ExternalLink size={13} /> {t('admin.viewContest')}
                   </a>
                   <button className="btn-icon-sm danger" title={t('common.delete')} onClick={() => handleDeleteContest(c.id)}>
