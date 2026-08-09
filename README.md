@@ -2,7 +2,7 @@
 
 <p align="center">
   <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/wanwusangzhigit/eoj/ci.yml?branch=main" />
-  <img alt="License" src="https://img.shields.io/github/license/wanwusangzhigit/eoj" />
+  <img alt="License" src="https://img.shields.io/badge/license-Custom%20protocol%20based%20on%20MIT-8A2BE2" />
   <img alt="Language" src="https://img.shields.io/badge/language-TypeScript-blue" />
   <img alt="Frontend" src="https://img.shields.io/badge/frontend-React%2019-61dafb" />
   <img alt="Backend" src="https://img.shields.io/badge/backend-Hono-orange" />
