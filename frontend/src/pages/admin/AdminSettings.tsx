@@ -10,13 +10,21 @@ import '../Admin.css';
 
 export default function AdminSettings() {
   useDocumentTitle(t('admin.siteSettings'));
-  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'oauth' | 'captcha'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'oauth' | 'captcha' | 'team'>('general');
   const [settingsRegistrationOpen, setSettingsRegistrationOpen] = useState(true);
   const [settingsEmailRequired, setSettingsEmailRequired] = useState(false);
   const [settingsEmailSuffixes, setSettingsEmailSuffixes] = useState('');
   const [settingsActionTimeout, setSettingsActionTimeout] = useState('300');
   const [settingsUploadEnabled, setSettingsUploadEnabled] = useState(true);
   const [settingsImageUploadEnabled, setSettingsImageUploadEnabled] = useState(true);
+  // 团队限制配置
+  const [settingsTeamMaxProblems, setSettingsTeamMaxProblems] = useState('');
+  const [settingsTeamMaxTimeLimit, setSettingsTeamMaxTimeLimit] = useState('');
+  const [settingsTeamMaxMemoryLimit, setSettingsTeamMaxMemoryLimit] = useState('');
+  const [settingsTeamMaxTestcaseSize, setSettingsTeamMaxTestcaseSize] = useState('');
+  const [settingsTeamMaxTestcaseCount, setSettingsTeamMaxTestcaseCount] = useState('');
+  const [settingsTeamMaxTotalTestcaseSize, setSettingsTeamMaxTotalTestcaseSize] = useState('');
+  const [settingsTeamAllowSpj, setSettingsTeamAllowSpj] = useState(true);
   const [settingsAIEnabled, setSettingsAIEnabled] = useState(false);
   const [settingsAIChatEnabled, setSettingsAIChatEnabled] = useState(true);
   const [settingsAICompletionEnabled, setSettingsAICompletionEnabled] = useState(true);
@@ -54,6 +62,13 @@ export default function AdminSettings() {
       setSettingsActionTimeout(data.action_timeout || '300');
       setSettingsUploadEnabled(data.upload_enabled !== 'false');
       setSettingsImageUploadEnabled(data.image_upload_enabled !== 'false');
+      setSettingsTeamMaxProblems(data.team_max_problems || '');
+      setSettingsTeamMaxTimeLimit(data.team_max_time_limit || '');
+      setSettingsTeamMaxMemoryLimit(data.team_max_memory_limit || '');
+      setSettingsTeamMaxTestcaseSize(data.team_max_testcase_size || '');
+      setSettingsTeamMaxTestcaseCount(data.team_max_testcase_count || '');
+      setSettingsTeamMaxTotalTestcaseSize(data.team_max_total_testcase_size || '');
+      setSettingsTeamAllowSpj(data.team_allow_spj !== 'false' && data.team_allow_spj !== '0');
       setSettingsAIEnabled(data.ai_enabled === 'true');
       setSettingsAIChatEnabled(data.ai_chat_enabled !== 'false');
       setSettingsAICompletionEnabled(data.ai_completion_enabled !== 'false');
@@ -99,6 +114,13 @@ export default function AdminSettings() {
         action_timeout: settingsActionTimeout,
         upload_enabled: String(settingsUploadEnabled),
         image_upload_enabled: String(settingsImageUploadEnabled),
+        team_max_problems: settingsTeamMaxProblems,
+        team_max_time_limit: settingsTeamMaxTimeLimit,
+        team_max_memory_limit: settingsTeamMaxMemoryLimit,
+        team_max_testcase_size: settingsTeamMaxTestcaseSize,
+        team_max_testcase_count: settingsTeamMaxTestcaseCount,
+        team_max_total_testcase_size: settingsTeamMaxTotalTestcaseSize,
+        team_allow_spj: String(settingsTeamAllowSpj),
         ai_enabled: String(settingsAIEnabled),
         ai_chat_enabled: String(settingsAIChatEnabled),
         ai_completion_enabled: String(settingsAICompletionEnabled),
@@ -138,6 +160,7 @@ export default function AdminSettings() {
       <div className="settings-tabs" style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         {([
           ['general', t('admin.settingsGeneral')],
+          ['team', t('admin.teamSettings')],
           ['ai', t('ai.aiSettings')],
           ['oauth', t('admin.oauthSettings')],
           ['captcha', t('admin.captchaSettings')],
@@ -237,6 +260,91 @@ export default function AdminSettings() {
           {t('common.uploadEnabledHint')}
         </p>
       </div>
+      </div>
+
+      {/* Team Limits */}
+      <div style={{marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--border-color)', display: activeTab === 'team' ? '' : 'none'}}>
+        <h3 style={{marginBottom: '12px'}}>{t('admin.teamSettings')}</h3>
+        <p style={{fontSize:'13px',color:'var(--text-secondary)',marginBottom:'12px'}}>
+          {t('admin.teamSettingsHint')}
+        </p>
+
+        <div className="form-group">
+          <label>{t('admin.teamMaxProblems')}</label>
+          <input
+            type="number"
+            min={1}
+            value={settingsTeamMaxProblems}
+            onChange={(e) => setSettingsTeamMaxProblems(e.target.value)}
+            placeholder="200"
+          />
+        </div>
+
+        <div className="form-group">
+          <label>{t('admin.teamMaxTimeLimit')}</label>
+          <input
+            type="number"
+            min={100}
+            value={settingsTeamMaxTimeLimit}
+            onChange={(e) => setSettingsTeamMaxTimeLimit(e.target.value)}
+            placeholder="10000"
+          />
+        </div>
+
+        <div className="form-group">
+          <label>{t('admin.teamMaxMemoryLimit')}</label>
+          <input
+            type="number"
+            min={16}
+            value={settingsTeamMaxMemoryLimit}
+            onChange={(e) => setSettingsTeamMaxMemoryLimit(e.target.value)}
+            placeholder="1024"
+          />
+        </div>
+
+        <div className="form-group">
+          <label>{t('admin.teamMaxTestcaseSize')}</label>
+          <input
+            type="number"
+            min={1024}
+            value={settingsTeamMaxTestcaseSize}
+            onChange={(e) => setSettingsTeamMaxTestcaseSize(e.target.value)}
+            placeholder="1048576"
+          />
+        </div>
+
+        <div className="form-group">
+          <label>{t('admin.teamMaxTestcaseCount')}</label>
+          <input
+            type="number"
+            min={1}
+            value={settingsTeamMaxTestcaseCount}
+            onChange={(e) => setSettingsTeamMaxTestcaseCount(e.target.value)}
+            placeholder="100"
+          />
+        </div>
+
+        <div className="form-group">
+          <label>{t('admin.teamMaxTotalTestcaseSize')}</label>
+          <input
+            type="number"
+            min={1024}
+            value={settingsTeamMaxTotalTestcaseSize}
+            onChange={(e) => setSettingsTeamMaxTotalTestcaseSize(e.target.value)}
+            placeholder="5242880"
+          />
+        </div>
+
+        <div className="form-group">
+          <label style={{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer'}}>
+            <input
+              type="checkbox"
+              checked={settingsTeamAllowSpj}
+              onChange={(e) => setSettingsTeamAllowSpj(e.target.checked)}
+            />
+            {t('admin.teamAllowSpj')}
+          </label>
+        </div>
       </div>
 
       {/* AI Settings */}

@@ -1726,13 +1726,45 @@ teams.post('/:id/problems', authMiddleware, async (c) => {
     }
   }
 
+  // 站点配置的团队限制校验:最大题目数 / 最大时间 / 最大内存
+  const config = await getTeamLimitConfig(c.env.DB);
+  if (effectiveJudgeType === 'spj' && !config.allow_spj) {
+    return c.json({
+      success: false,
+      error: { message: 'SPJ is disabled for team problems', code: 'FORBIDDEN' },
+    }, 403);
+  }
+  const countResult: any = await c.env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM team_problems WHERE team_id = ?'
+  ).bind(id).first();
+  if ((countResult?.cnt || 0) >= config.max_problems) {
+    return c.json({
+      success: false,
+      error: { message: `Team problem count exceeds limit: max ${config.max_problems}`, code: 'BAD_REQUEST' },
+    }, 400);
+  }
+  const effTimeLimit = time_limit || 1000;
+  const effMemoryLimit = memory_limit || 256;
+  if (effTimeLimit > config.max_time_limit) {
+    return c.json({
+      success: false,
+      error: { message: `time_limit exceeds limit: max ${config.max_time_limit}ms`, code: 'BAD_REQUEST' },
+    }, 400);
+  }
+  if (effMemoryLimit > config.max_memory_limit) {
+    return c.json({
+      success: false,
+      error: { message: `memory_limit exceeds limit: max ${config.max_memory_limit}MB`, code: 'BAD_REQUEST' },
+    }, 400);
+  }
+
   try {
     const result = await c.env.DB.prepare(
       `INSERT INTO problems (title, slug, description, input_format, output_format, time_limit, memory_limit, tags, difficulty, is_public, judge_type, spj_language)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
     ).bind(
       title, slug, description, input_format || null, output_format || null,
-      time_limit || 1000, memory_limit || 256, JSON.stringify(tags || []),
+      effTimeLimit, effMemoryLimit, JSON.stringify(tags || []),
       difficulty || 'Easy', effectiveJudgeType, effectiveJudgeType === 'spj' ? spj_language : null
     ).run();
 
@@ -1828,6 +1860,13 @@ teams.put('/:id/problems/:problemId', authMiddleware, async (c) => {
     if (!spjLang || !VALID_SPJ_LANGUAGES.includes(spjLang)) {
       return c.json({ success: false, error: { message: `spj_language is required and must be one of: ${VALID_SPJ_LANGUAGES.join(', ')}`, code: 'BAD_REQUEST' } }, 400);
     }
+    const config = await getTeamLimitConfig(c.env.DB);
+    if (!config.allow_spj) {
+      return c.json({
+        success: false,
+        error: { message: 'SPJ is disabled for team problems', code: 'FORBIDDEN' },
+      }, 403);
+    }
   }
 
   const fields: string[] = [];
@@ -1853,6 +1892,24 @@ teams.put('/:id/problems/:problemId', authMiddleware, async (c) => {
   if (fields.length === 0) {
     return c.json({ success: false, error: { message: 'No fields to update', code: 'BAD_REQUEST' } }, 400);
   }
+
+  // 站点配置的团队限制校验:最大时间 / 最大内存(仅在修改这两个字段时校验)
+  if (body.time_limit !== undefined || body.memory_limit !== undefined) {
+    const config = await getTeamLimitConfig(c.env.DB);
+    if (body.time_limit !== undefined && Number(body.time_limit) > config.max_time_limit) {
+      return c.json({
+        success: false,
+        error: { message: `time_limit exceeds limit: max ${config.max_time_limit}ms`, code: 'BAD_REQUEST' },
+      }, 400);
+    }
+    if (body.memory_limit !== undefined && Number(body.memory_limit) > config.max_memory_limit) {
+      return c.json({
+        success: false,
+        error: { message: `memory_limit exceeds limit: max ${config.max_memory_limit}MB`, code: 'BAD_REQUEST' },
+      }, 400);
+    }
+  }
+
   fields.push("updated_at = datetime('now')");
   values.push(problemId);
   await c.env.DB.prepare(`UPDATE problems SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
@@ -1904,6 +1961,183 @@ teams.delete('/:id/problems/:problemId', authMiddleware, async (c) => {
   ]);
 
   return c.json({ success: true, data: { message: 'Problem deleted' } });
+});
+
+// ============================================================
+// 团队私有题目测试数据(存 GitHub,与主题库一致)
+// ============================================================
+
+// 读取站点配置中的团队限制项,缺省用宽松默认值
+async function getTeamLimitConfig(db: D1Database): Promise<{
+  max_problems: number; max_time_limit: number; max_memory_limit: number;
+  max_testcase_size: number; max_testcase_count: number;
+  max_total_testcase_size: number; allow_spj: boolean;
+}> {
+  const defaults = {
+    max_problems: 200, max_time_limit: 10000, max_memory_limit: 1024,
+    max_testcase_size: 1024 * 1024, max_testcase_count: 100, // 1MB / 100 个
+    max_total_testcase_size: 5 * 1024 * 1024, // 每题测试数据总量 5MB
+  };
+  const rows = await db.prepare(
+    "SELECT key, value FROM settings WHERE key IN ('team_max_problems','team_max_time_limit','team_max_memory_limit','team_max_testcase_size','team_max_testcase_count','team_max_total_testcase_size','team_allow_spj')"
+  ).all();
+  const map: Record<string, string> = {};
+  for (const r of rows.results as any[]) map[r.key] = r.value;
+  return {
+    max_problems: parseInt(map.team_max_problems) || defaults.max_problems,
+    max_time_limit: parseInt(map.team_max_time_limit) || defaults.max_time_limit,
+    max_memory_limit: parseInt(map.team_max_memory_limit) || defaults.max_memory_limit,
+    max_testcase_size: parseInt(map.team_max_testcase_size) || defaults.max_testcase_size,
+    max_testcase_count: parseInt(map.team_max_testcase_count) || defaults.max_testcase_count,
+    max_total_testcase_size: parseInt(map.team_max_total_testcase_size) || defaults.max_total_testcase_size,
+    allow_spj: map.team_allow_spj !== 'false' && map.team_allow_spj !== '0',
+  };
+}
+
+// 校验团队成员对私有题目的管理权限(owner/admin 或题目子权限)
+async function canManageTeamProblem(db: D1Database, teamId: number, problemId: number, userId: number, user: any): Promise<boolean> {
+  const team: any = await db.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(teamId).first();
+  if (!team) return false;
+  if (isTeamOwnerOrAdmin(team, userId, user)) return true;
+  const row: any = await db.prepare(
+    'SELECT can_edit_problems FROM team_members WHERE team_id = ? AND user_id = ?'
+  ).bind(teamId, userId).first();
+  return !!(row && row.can_edit_problems === 1);
+}
+
+// GET /teams/:id/problems/:problemId/testcases — 读取全部测试数据(团队题目管理权限)
+teams.get('/:id/problems/:problemId/testcases', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+
+  const existing: any = await c.env.DB.prepare(
+    `SELECT p.slug FROM team_problems tp JOIN problems p ON tp.problem_id = p.id
+     WHERE tp.team_id = ? AND tp.problem_id = ?`
+  ).bind(id, problemId).first();
+  if (!existing) {
+    return c.json({ success: false, error: { message: 'Problem not found in this team', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!await canManageTeamProblem(c.env.DB, id, problemId, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires problem management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const testcases = await fetchTestcases(c.env, existing.slug);
+  return c.json({ success: true, data: { testcases } });
+});
+
+// POST /teams/:id/problems/:problemId/testcases — 追加测试数据(校验大小/数量上限)
+teams.post('/:id/problems/:problemId/testcases', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+  const body = await c.req.json();
+
+  const existing: any = await c.env.DB.prepare(
+    `SELECT p.slug, p.judge_type FROM team_problems tp JOIN problems p ON tp.problem_id = p.id
+     WHERE tp.team_id = ? AND tp.problem_id = ?`
+  ).bind(id, problemId).first();
+  if (!existing) {
+    return c.json({ success: false, error: { message: 'Problem not found in this team', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!await canManageTeamProblem(c.env.DB, id, problemId, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires problem management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const config = await getTeamLimitConfig(c.env.DB);
+  const isSpj = existing.judge_type === 'spj';
+  const newTestcases = Array.isArray(body) ? body : [body];
+
+  const validTestcases = newTestcases.filter((tc: any) =>
+    tc.input && (isSpj || tc.expected_output)
+  );
+  if (validTestcases.length === 0) {
+    return c.json({ success: false, error: { message: 'No valid testcases provided', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  // 大小上限:单个测试点 input+expected_output 的字节数
+  for (const tc of validTestcases) {
+    const size = Buffer.byteLength(String(tc.input || '')) + Buffer.byteLength(String(tc.expected_output || ''));
+    if (size > config.max_testcase_size) {
+      return c.json({
+        success: false,
+        error: { message: `Testcase too large: max ${config.max_testcase_size} bytes`, code: 'BAD_REQUEST' },
+      }, 400);
+    }
+  }
+
+  // 数量上限:现有 + 新增
+  const existingTestcases = await fetchTestcases(c.env, existing.slug);
+  if (existingTestcases.length + validTestcases.length > config.max_testcase_count) {
+    return c.json({
+      success: false,
+      error: { message: `Testcase count exceeds limit: max ${config.max_testcase_count}`, code: 'BAD_REQUEST' },
+    }, 400);
+  }
+
+  // 单题测试数据总量上限:现有总量 + 新增总量
+  const existingTotalSize = existingTestcases.reduce(
+    (sum: number, tc: any) => sum + Buffer.byteLength(String(tc.input || '')) + Buffer.byteLength(String(tc.expected_output || '')),
+    0
+  );
+  const newTotalSize = validTestcases.reduce(
+    (sum: number, tc: any) => sum + Buffer.byteLength(String(tc.input || '')) + Buffer.byteLength(String(tc.expected_output || '')),
+    0
+  );
+  if (existingTotalSize + newTotalSize > config.max_total_testcase_size) {
+    return c.json({
+      success: false,
+      error: { message: `Total testcase size exceeds limit: max ${config.max_total_testcase_size} bytes`, code: 'BAD_REQUEST' },
+    }, 400);
+  }
+
+  const allTestcases = [
+    ...existingTestcases,
+    ...validTestcases.map((tc: any) => ({
+      input: tc.input,
+      expected_output: tc.expected_output || '',
+      is_sample: tc.is_sample || false,
+      score: tc.score || 10,
+    })),
+  ];
+
+  const success = await saveTestcases(c.env, existing.slug, allTestcases);
+  if (!success) {
+    return c.json({ success: false, error: { message: 'Failed to save testcases', code: 'INTERNAL_ERROR' } }, 500);
+  }
+
+  return c.json({ success: true, data: { message: 'Testcases added', count: validTestcases.length } }, 201);
+});
+
+// DELETE /teams/:id/problems/:problemId/testcases/:index — 删除单个测试点
+teams.delete('/:id/problems/:problemId/testcases/:index', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+  const index = parseInt(c.req.param('index') || '0');
+
+  const existing: any = await c.env.DB.prepare(
+    `SELECT p.slug FROM team_problems tp JOIN problems p ON tp.problem_id = p.id
+     WHERE tp.team_id = ? AND tp.problem_id = ?`
+  ).bind(id, problemId).first();
+  if (!existing) {
+    return c.json({ success: false, error: { message: 'Problem not found in this team', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!await canManageTeamProblem(c.env.DB, id, problemId, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires problem management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const testcases = await fetchTestcases(c.env, existing.slug);
+  if (index < 0 || index >= testcases.length) {
+    return c.json({ success: false, error: { message: 'Testcase index out of range', code: 'NOT_FOUND' } }, 404);
+  }
+  testcases.splice(index, 1);
+  const success = await saveTestcases(c.env, existing.slug, testcases);
+  if (!success) {
+    return c.json({ success: false, error: { message: 'Failed to delete testcase', code: 'INTERNAL_ERROR' } }, 500);
+  }
+
+  return c.json({ success: true, data: { message: 'Testcase deleted' } });
 });
 
 // ============================================================

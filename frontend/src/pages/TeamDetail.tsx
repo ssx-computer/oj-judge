@@ -6,12 +6,15 @@ import {
   Users, UserMinus, LogOut, Trophy, ArrowLeft, Bell, MessageSquare,
   BookOpen, Swords, Shield, Check, X, Plus, Send, Star, Eye,
   Calendar, Clock, UserPlus, Settings, UserCog, Flag,
-  List, FolderOpen, Trash2, Code2, Save,
+  List, FolderOpen, Trash2, Code2, Save, Upload, Download,
+  ChevronUp, ChevronDown, FileArchive,
 } from 'lucide-react';
+import JSZip from 'jszip';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAuthStore } from '../store/auth';
 import { useToastStore } from '../store/toast';
+import { useSettingsStore } from '../store/settings';
 import './Teams.css';
 
 type Tab = 'overview' | 'announcements' | 'discussions' | 'problemSets' | 'contests' | 'members' | 'rankings' | 'settings' | 'problems' | 'groups';
@@ -452,6 +455,23 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
     time_limit: 1000, memory_limit: 256, tags: '', difficulty: 'Easy', testcases: '',
   });
 
+  // ── 测试数据管理状态(类比主题库 AdminTestcases) ──
+  const [selectedProblem, setSelectedProblem] = useState<any>(null);
+  const [existingTestcases, setExistingTestcases] = useState<any[]>([]);
+  const [newTestcases, setNewTestcases] = useState<any[]>([{ input: '', expected_output: '', is_sample: false, score: 10 }]);
+  const [expandedTestcases, setExpandedTestcases] = useState<Set<number>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [tcLoading, setTcLoading] = useState(false);
+
+  // 站点配置中的团队限制(每题测试数据总量上限)
+  const siteSettings = useSettingsStore((s) => s.settings);
+  const maxTotalTestcaseSize = parseInt(siteSettings.team_max_total_testcase_size || '') || 5 * 1024 * 1024;
+  const existingTotalSize = existingTestcases.reduce(
+    (sum: number, tc: any) => sum + new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length,
+    0
+  );
+  const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)}MB` : `${(bytes / 1024).toFixed(1)}KB`;
+
   const fetchProblems = useCallback(async () => {
     setLoading(true);
     try {
@@ -503,7 +523,278 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
     }
   };
 
+  // ── 测试数据管理 handlers ──
+  const openTestcases = async (p: any) => {
+    setSelectedProblem(p);
+    setTcLoading(true);
+    setNewTestcases([{ input: '', expected_output: '', is_sample: false, score: 10 }]);
+    setExpandedTestcases(new Set());
+    try {
+      const data = await api.getTeamProblemTestcases(teamId, p.id);
+      setExistingTestcases(data.testcases || []);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+      setExistingTestcases([]);
+    } finally {
+      setTcLoading(false);
+    }
+  };
+
+  const handleAddTestcaseRow = () => {
+    setNewTestcases([...newTestcases, { input: '', expected_output: '', is_sample: false, score: 10 }]);
+  };
+
+  const handleBatchUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        const batch = Array.isArray(data) ? data : [data];
+        const parsed = batch.map((item: any) => ({
+          input: item.input || '',
+          expected_output: item.expected_output || item.output || '',
+          is_sample: item.is_sample || false,
+          score: item.score || 10,
+        }));
+        if (parsed.length === 0) {
+          addToast('error', t('admin.atLeastOneTestcase'));
+          return;
+        }
+        setNewTestcases(parsed);
+        addToast('success', t('admin.testcaseAdded'));
+      } catch {
+        addToast('error', t('teams.testcasesHint'));
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      const inEntries = Object.entries(zip.files).filter(
+        ([name, entry]) => !entry.dir && /\.in$/i.test(name)
+      );
+      const parsed: any[] = [];
+      for (const [name, entry] of inEntries) {
+        const outName = name.replace(/\.in$/i, '.out');
+        const outEntry = zip.files[outName];
+        if (!outEntry || outEntry.dir) continue;
+        const input = await entry.async('string');
+        const output = await outEntry.async('string');
+        parsed.push({ input, expected_output: output, is_sample: false, score: 10 });
+      }
+      if (parsed.length === 0) {
+        addToast('error', t('admin.atLeastOneTestcase'));
+        return;
+      }
+      setNewTestcases(parsed);
+      addToast('success', t('admin.testcaseAdded'));
+    } catch {
+      addToast('error', t('teams.testcasesHint'));
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveTestcases = async () => {
+    if (!selectedProblem) return;
+    const validTestcases = newTestcases.filter((tc) => tc.input && tc.expected_output);
+    if (validTestcases.length === 0) {
+      addToast('error', t('admin.atLeastOneTestcase'));
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.addTeamProblemTestcases(teamId, selectedProblem.id, validTestcases);
+      addToast('success', t('admin.testcaseAdded'));
+      setNewTestcases([{ input: '', expected_output: '', is_sample: false, score: 10 }]);
+      const data = await api.getTeamProblemTestcases(teamId, selectedProblem.id);
+      setExistingTestcases(data.testcases);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteTestcase = async (index: number) => {
+    if (!selectedProblem) return;
+    if (!window.confirm(t('admin.deleteTestcaseConfirm'))) return;
+    try {
+      await api.deleteTeamProblemTestcase(teamId, selectedProblem.id, index);
+      addToast('success', t('admin.testcaseDeleted'));
+      const data = await api.getTeamProblemTestcases(teamId, selectedProblem.id);
+      setExistingTestcases(data.testcases);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handleBatchExport = () => {
+    if (existingTestcases.length === 0) {
+      addToast('error', t('admin.noTestcaseData'));
+      return;
+    }
+    const exportData = existingTestcases.map((tc: any) => ({
+      input: tc.input,
+      expected_output: tc.expected_output,
+      is_sample: !!tc.is_sample,
+      score: tc.score || 10,
+    }));
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${selectedProblem?.slug || 'testcases'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addToast('success', t('admin.exportComplete'));
+  };
+
+  const toggleTestcaseExpand = (index: number) => {
+    setExpandedTestcases(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
   if (loading) return <LoadingSpinner />;
+
+  // 测试数据管理视图
+  if (selectedProblem) {
+    return (
+      <div>
+        <div className="tab-actions">
+          <button className="btn btn-secondary btn-sm" onClick={() => setSelectedProblem(null)}>
+            <ArrowLeft size={14} /> {t('common.back')}
+          </button>
+          <span className="badge" style={{ marginLeft: 8 }}>{selectedProblem.title}</span>
+        </div>
+
+        <div className="testcase-existing" style={{ marginTop: 12 }}>
+          <h3>{t('admin.existingTestcases')} ({existingTestcases.length})</h3>
+          {tcLoading ? <LoadingSpinner /> : existingTestcases.length === 0 ? (
+            <p className="testcase-empty">{t('admin.noTestcaseData')}</p>
+          ) : (
+            <>
+              <div className="testcase-stats">
+                <span>{t('admin.sampleCount').replace('{0}', String(existingTestcases.filter((tc: any) => tc.is_sample).length))}</span>
+                <span>{t('admin.hiddenCount').replace('{0}', String(existingTestcases.filter((tc: any) => !tc.is_sample).length))}</span>
+                <span>{t('admin.totalScore').replace('{0}', String(existingTestcases.reduce((sum: number, tc: any) => sum + (tc.score || 0), 0)))}</span>
+                <span style={{ color: existingTotalSize > maxTotalTestcaseSize ? 'var(--error)' : undefined }}>
+                  {t('teams.totalTestcaseSize').replace('{0}', formatBytes(existingTotalSize)).replace('{1}', formatBytes(maxTotalTestcaseSize))}
+                </span>
+                <button className="btn btn-secondary btn-sm" onClick={handleBatchExport} style={{ marginLeft: 'auto' }}>
+                  <Download size={14} /> {t('admin.exportProblems')}
+                </button>
+              </div>
+              <div className="testcase-list">
+                {existingTestcases.map((tc: any, idx: number) => (
+                  <div key={idx} className="testcase-item">
+                    <div className="testcase-summary-row" onClick={() => toggleTestcaseExpand(idx)}>
+                      <span className="testcase-index">#{idx + 1}</span>
+                      <span className={`testcase-type-badge ${tc.is_sample ? 'sample' : 'hidden'}`}>
+                        {tc.is_sample ? t('admin.sample') : t('admin.hidden')}
+                      </span>
+                      <span className="testcase-score">{t('admin.score')}: {tc.score}</span>
+                      <span className="testcase-expand-icon">
+                        {expandedTestcases.has(idx) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </span>
+                      <button className="btn btn-danger btn-sm" onClick={(e) => { e.stopPropagation(); handleDeleteTestcase(idx); }}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    {expandedTestcases.has(idx) && (
+                      <div className="testcase-detail">
+                        <div className="testcase-item-body">
+                          <div className="testcase-io">
+                            <label>{t('admin.input')}:</label>
+                            <pre>{tc.input}</pre>
+                          </div>
+                          <div className="testcase-io">
+                            <label>{t('common.output')}:</label>
+                            <pre>{tc.expected_output}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="testcase-new" style={{ marginTop: 16 }}>
+          <h3>{t('admin.addNewTestcases')}</h3>
+          {newTestcases.map((tc, idx) => (
+            <div key={idx} className="testcase-form-row">
+              <div className="form-group">
+                <label>{t('admin.input')}</label>
+                <textarea rows={3} value={tc.input} onChange={(e) => {
+                  const updated = [...newTestcases];
+                  updated[idx] = { ...updated[idx], input: e.target.value };
+                  setNewTestcases(updated);
+                }} />
+              </div>
+              <div className="form-group">
+                <label>{t('admin.expectedOutput')}</label>
+                <textarea rows={3} value={tc.expected_output} onChange={(e) => {
+                  const updated = [...newTestcases];
+                  updated[idx] = { ...updated[idx], expected_output: e.target.value };
+                  setNewTestcases(updated);
+                }} />
+              </div>
+              <div className="form-group small">
+                <label className="checkbox-label">
+                  <input type="checkbox" checked={tc.is_sample} onChange={(e) => {
+                    const updated = [...newTestcases];
+                    updated[idx] = { ...updated[idx], is_sample: e.target.checked };
+                    setNewTestcases(updated);
+                  }} />
+                  {t('admin.sample')}
+                </label>
+              </div>
+              <div className="form-group small">
+                <label>{t('admin.score')}</label>
+                <input type="number" value={tc.score} onChange={(e) => {
+                  const updated = [...newTestcases];
+                  updated[idx] = { ...updated[idx], score: parseInt(e.target.value) };
+                  setNewTestcases(updated);
+                }} />
+              </div>
+            </div>
+          ))}
+          <div className="form-actions">
+            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+              <Upload size={14} /> {t('admin.addTestcases')}
+              <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleBatchUpload} />
+            </label>
+            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+              <FileArchive size={14} /> {t('admin.importProblems')}
+              <input type="file" accept=".zip" style={{ display: 'none' }} onChange={handleZipImport} />
+            </label>
+            <button className="btn btn-secondary" onClick={handleAddTestcaseRow}>
+              <Plus size={14} /> {t('admin.addTestcase')}
+            </button>
+            <button className="btn btn-primary" onClick={handleSaveTestcases} disabled={saving}>
+              <Save size={16} />
+              {saving ? t('admin.saving') : t('admin.saveTestcases')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       {isMember && (
@@ -548,6 +839,7 @@ function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }
               <span className={`diff-badge diff-${p.difficulty?.toLowerCase()}`}>{p.difficulty}</span>
               {isMember && (
                 <span className="member-actions">
+                  <button className="btn-icon-sm" onClick={() => openTestcases(p)} title={t('admin.manageTestcases')}><Upload size={13} /></button>
                   <Link to={`/team/${teamId}/problem/${p.id}`} className="btn-icon-sm" title={t('teams.editProblem')}><Code2 size={13} /></Link>
                   <button className="btn-icon-sm danger" onClick={() => handleDelete(p.id)} title={t('teams.deleteProblem')}><Trash2 size={13} /></button>
                 </span>
