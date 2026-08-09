@@ -44,7 +44,19 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: isProduction ? {
       output: {
-        manualChunks: undefined,
+        // Split third-party libraries into their own chunks so the main
+        // entry stays small and vendors are cached across deploys.
+        // NOTE: rolldown (Vite 8) only accepts a FUNCTION here.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('codemirror') || id.includes('@lezer')) return 'codemirror';
+          if (id.includes('lucide-react')) return 'icons';
+          if (id.includes('marked') || id.includes('dompurify')) return 'markdown';
+          if (id.includes('katex')) return 'katex';
+          if (id.includes('zustand')) return 'state';
+          if (id.includes('react') || id.includes('scheduler')) return 'react-vendor';
+          return 'vendor';
+        },
       },
     } : {},
   },

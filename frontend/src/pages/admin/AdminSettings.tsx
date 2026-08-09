@@ -10,6 +10,7 @@ import '../Admin.css';
 
 export default function AdminSettings() {
   useDocumentTitle(t('admin.siteSettings'));
+  const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'oauth' | 'captcha'>('general');
   const [settingsRegistrationOpen, setSettingsRegistrationOpen] = useState(true);
   const [settingsEmailRequired, setSettingsEmailRequired] = useState(false);
   const [settingsEmailSuffixes, setSettingsEmailSuffixes] = useState('');
@@ -134,6 +135,25 @@ export default function AdminSettings() {
     <div className="admin-form">
       <h2>{t('admin.siteSettings')}</h2>
 
+      <div className="settings-tabs" style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+        {([
+          ['general', t('admin.settingsGeneral')],
+          ['ai', t('ai.aiSettings')],
+          ['oauth', t('admin.oauthSettings')],
+          ['captcha', t('admin.captchaSettings')],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={`btn btn-sm ${activeTab === key ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: activeTab === 'general' ? '' : 'none' }}>
       <div className="form-group">
         <label style={{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer'}}>
           <input
@@ -217,9 +237,10 @@ export default function AdminSettings() {
           {t('common.uploadEnabledHint')}
         </p>
       </div>
+      </div>
 
       {/* AI Settings */}
-      <div style={{marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--border-color)'}}>
+      <div style={{marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--border-color)', display: activeTab === 'ai' ? '' : 'none'}}>
         <h3 style={{marginBottom: '12px'}}>{t('ai.aiSettings')}</h3>
 
         <div className="form-group">
@@ -405,7 +426,7 @@ export default function AdminSettings() {
         </div>
       </div>
 
-      <div style={{marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--border-color)'}}>
+      <div style={{marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--border-color)', display: activeTab === 'oauth' ? '' : 'none'}}>
         <h3 style={{marginBottom: '12px'}}>{t('admin.oauthSettings')}</h3>
 
         <div className="form-group">
@@ -439,7 +460,7 @@ export default function AdminSettings() {
       </div>
 
       {/* CAPTCHA Settings */}
-      <div style={{marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--border-color)'}}>
+      <div style={{marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--border-color)', display: activeTab === 'captcha' ? '' : 'none'}}>
         <h3 style={{marginBottom: '12px'}}>{t('admin.captchaSettings')}</h3>
 
         <div className="form-group">

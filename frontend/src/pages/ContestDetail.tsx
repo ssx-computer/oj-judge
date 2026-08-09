@@ -6,7 +6,7 @@ import { useToastStore } from '../store/toast';
 import RatingBadge from '../components/RatingBadge';
 import { SkeletonTable } from '../components/Skeleton';
 import { getRatingColor } from '../utils/rating';
-import { Trophy, Calendar, Users, ChevronRight, UserPlus, CheckCircle, Clock, Eye, MessageSquare, BookOpen, Timer, Edit3, XCircle, AlertCircle, Play, Sparkles, TrendingUp, TrendingDown } from 'lucide-react';
+import { Trophy, Calendar, Users, ChevronRight, UserPlus, CheckCircle, Clock, Eye, MessageSquare, BookOpen, Timer, Edit3, XCircle, AlertCircle, Play, Sparkles, TrendingUp, TrendingDown, Bell, Plus, Send, X } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import './ContestDetail.css';
@@ -33,7 +33,9 @@ function formatCountdown(ms: number): string {
 }
 
 export default function ContestDetail() {
-  const { id } = useParams<{ id: string }>();
+  const { id, teamId, matchId } = useParams<{ id?: string; teamId?: string; matchId?: string }>();
+  const isTeamMatch = !!teamId && !!matchId;
+  const matchRoot = isTeamMatch ? `/team/${teamId}/match/${matchId}` : `/match/${id}`;
   const { user } = useAuthStore();
   const addToast = useToastStore((s) => s.addToast);
   const [contest, setContest] = useState<any>(null);
@@ -44,24 +46,139 @@ export default function ContestDetail() {
   const [registered, setRegistered] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [activeTab, setActiveTab] = useState<'problems' | 'rankings' | 'review'>('problems');
+  const [activeTab, setActiveTab] = useState<'problems' | 'rankings' | 'review' | 'announcements' | 'clarifications'>('problems');
   const [registering, setRegistering] = useState(false);
   const [virtualStarting, setVirtualStarting] = useState(false);
   const [ratingChanges, setRatingChanges] = useState<any[]>([]);
   const [countdown, setCountdown] = useState<string>('');
   const [selectedProblem, setSelectedProblem] = useState<string | null>(null);
   const [myProblemStatus, setMyProblemStatus] = useState<Record<string, { status: string; score: number; best_score: number }>>({});
+  // ── 赛时公告 / 答疑 state ──
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [clarifications, setClarifications] = useState<any[]>([]);
+  const [showAnnouncementForm, setShowAnnouncementForm] = useState(false);
+  const [annTitle, setAnnTitle] = useState('');
+  const [annContent, setAnnContent] = useState('');
+  const [clarQuestion, setClarQuestion] = useState('');
+  const [answerDrafts, setAnswerDrafts] = useState<Record<number, string>>({});
+  const [isTeamManager, setIsTeamManager] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endedRefreshDone = useRef(false);
-  useDocumentTitle(contest?.title);
+  useDocumentTitle(contest?.title, contest?.description ? contest.description.slice(0, 150) : undefined);
+
+  // 团队比赛模式下加载当前用户的团队管理权限(owner/admin 或 can_edit_contests)
+  useEffect(() => {
+    if (!isTeamMatch || !teamId || !user) return;
+    let cancelled = false;
+    api.getTeamMembers(Number(teamId)).then((d) => {
+      if (cancelled) return;
+      const me = (d.members || []).find((m: any) => m.user_id === user.id);
+      setIsTeamManager(!!me && (me.role === 'owner' || me.role === 'admin' || me.can_edit_contests === 1));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isTeamMatch, teamId, user]);
+
+  const fetchAnnouncements = useCallback(async () => {
+    try {
+      const data = isTeamMatch
+        ? await api.getTeamContestAnnouncements(Number(teamId), Number(matchId))
+        : await api.getContestAnnouncements(Number(id));
+      setAnnouncements(data.announcements || []);
+    } catch { /* ignore */ }
+  }, [id, teamId, matchId, isTeamMatch]);
+
+  const fetchClarifications = useCallback(async () => {
+    if (!user) return;
+    try {
+      const data = isTeamMatch
+        ? await api.getTeamContestClarifications(Number(teamId), Number(matchId))
+        : await api.getContestClarifications(Number(id));
+      setClarifications(data.clarifications || []);
+    } catch { /* ignore */ }
+  }, [id, teamId, matchId, isTeamMatch, user]);
+
+  const isHost = user?.id === 1 || user?.role === 'admin' || user?.role === 'super_admin'
+    || (Array.isArray(user?.permissions) && user.permissions.includes('contest_admin'))
+    || (isTeamMatch && isTeamManager);
+
+  const handlePublishAnnouncement = async () => {
+    if (!annTitle.trim() || !annContent.trim()) return;
+    try {
+      if (isTeamMatch) {
+        await api.createTeamContestAnnouncement(Number(teamId), Number(matchId), { title: annTitle, content: annContent });
+      } else {
+        await api.createContestAnnouncement(Number(id), { title: annTitle, content: annContent });
+      }
+      addToast('success', t('contests.announcementPublished'));
+      setAnnTitle('');
+      setAnnContent('');
+      setShowAnnouncementForm(false);
+      fetchAnnouncements();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handleDeleteAnnouncement = async (announcementId: number) => {
+    if (!window.confirm(t('teams.deleteAnnouncement') + '?')) return;
+    try {
+      if (isTeamMatch) {
+        await api.deleteTeamContestAnnouncement(Number(teamId), Number(matchId), announcementId);
+      } else {
+        await api.deleteContestAnnouncement(Number(id), announcementId);
+      }
+      addToast('success', t('contests.announcementDeleted'));
+      fetchAnnouncements();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handleAskQuestion = async () => {
+    if (!clarQuestion.trim()) return;
+    try {
+      if (isTeamMatch) {
+        await api.createTeamContestClarification(Number(teamId), Number(matchId), clarQuestion.trim());
+      } else {
+        await api.createContestClarification(Number(id), clarQuestion.trim());
+      }
+      addToast('success', t('contests.questionSubmitted'));
+      setClarQuestion('');
+      fetchClarifications();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handleAnswerClarification = async (clarificationId: number) => {
+    const answer = (answerDrafts[clarificationId] || '').trim();
+    if (!answer) return;
+    try {
+      if (isTeamMatch) {
+        await api.answerTeamContestClarification(Number(teamId), Number(matchId), clarificationId, answer);
+      } else {
+        await api.answerContestClarification(Number(id), clarificationId, answer);
+      }
+      addToast('success', t('contests.answerSubmitted'));
+      setAnswerDrafts((d) => ({ ...d, [clarificationId]: '' }));
+      fetchClarifications();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
 
   const fetchContest = useCallback(async () => {
     setLoading(true);
     setLoadError('');
     try {
-      const data = await api.getContest(Number(id));
+      const data: any = isTeamMatch
+        ? await api.getTeamContest(Number(teamId), Number(matchId))
+        : await api.getContest(Number(id));
       setContest(data.contest);
-      if (user) {
+      if (isTeamMatch) {
+        setProblems(data.problems || []);
+        setRegistered(!!data.is_registered);
+      } else if (user) {
         try {
           const regData = await api.checkContestRegistration(Number(id));
           setRegistered(regData.registered);
@@ -74,17 +191,19 @@ export default function ContestDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, user]);
+  }, [id, teamId, matchId, user, isTeamMatch]);
 
   const fetchProblems = useCallback(async () => {
     try {
-      const data = await api.getContestProblems(Number(id));
+      const data: any = isTeamMatch
+        ? await api.getTeamContest(Number(teamId), Number(matchId))
+        : await api.getContestProblems(Number(id));
       setProblems(data.problems);
     } catch (e: any) {
       setLoadError(e.message || t('common.error'));
     }
     // Also fetch my status
-    if (user) {
+    if (user && !isTeamMatch) {
       try {
         const statusData = await api.getContestMyStatus(Number(id));
         setMyProblemStatus(statusData.problems);
@@ -92,34 +211,47 @@ export default function ContestDetail() {
         // ignore - might not be registered
       }
     }
-  }, [id, user]);
+  }, [id, teamId, matchId, user, isTeamMatch]);
 
   const fetchRankings = useCallback(async () => {
     try {
-      const data = await api.getContestRankings(Number(id));
-      setRankings(data.rankings);
-      setRankingProblems(data.problems || []);
-      setRankingsMeta({
-        scoring_type: data.scoring_type,
-        is_rated: data.is_rated,
-        rating_finalized: data.rating_finalized,
-      });
+      if (isTeamMatch) {
+        // 团队比赛排行榜接口只返回 rankings,题目列表从 contest problems 取
+        const data: any = await api.getTeamContestRankings(Number(teamId), Number(matchId));
+        setRankings(data.rankings || []);
+        setRankingProblems(problems.map((p: any) => ({ label: p.label || '', score: p.score })));
+        setRankingsMeta({});
+      } else {
+        const data: any = await api.getContestRankings(Number(id));
+        setRankings(data.rankings);
+        setRankingProblems(data.problems || []);
+        setRankingsMeta({
+          scoring_type: data.scoring_type,
+          is_rated: data.is_rated,
+          rating_finalized: data.rating_finalized,
+        });
+      }
     } catch (e: any) {
       setLoadError(e.message || t('common.error'));
     }
-  }, [id]);
+  }, [id, teamId, matchId, isTeamMatch, problems]);
 
   const fetchRatingChanges = useCallback(async () => {
+    if (isTeamMatch) return;
     try {
       const data = await api.getContestRatingChanges(Number(id));
       setRatingChanges(data.changes || []);
     } catch {
       // contest may not be finalized yet — ignore
     }
-  }, [id]);
+  }, [id, isTeamMatch]);
 
   const getStatus = useCallback((): string => {
-    if (contest?.status) return contest.status;
+    if (contest?.status) {
+      if (contest.status === 'pending') return 'upcoming';
+      if (contest.status === 'finished') return 'ended';
+      return contest.status;
+    }
     const now = Date.now();
     const start = new Date(contest.start_time).getTime();
     const end = new Date(contest.end_time).getTime();
@@ -129,11 +261,13 @@ export default function ContestDetail() {
   }, [contest]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id && !isTeamMatch) return;
     endedRefreshDone.current = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContest();
-  }, [fetchContest, id]);
+    if (user) fetchClarifications();
+    fetchAnnouncements();
+  }, [fetchContest, id, isTeamMatch, fetchAnnouncements, fetchClarifications, user]);
 
   // Countdown timer
   useEffect(() => {
@@ -188,7 +322,7 @@ export default function ContestDetail() {
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
-    if (!id || !contest) return;
+    if ((!id && !isTeamMatch) || !contest) return;
     if (activeTab === 'problems') {
       fetchProblems();
     } else if (activeTab === 'rankings') {
@@ -199,22 +333,26 @@ export default function ContestDetail() {
       fetchRatingChanges();
     }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [activeTab, id, contest, fetchProblems, fetchRankings, fetchRatingChanges]);
+  }, [activeTab, id, isTeamMatch, contest, fetchProblems, fetchRankings, fetchRatingChanges]);
 
   // Auto-refresh rankings during running contest
   useEffect(() => {
-    if (!id || !contest || activeTab !== 'rankings') return;
+    if ((!id && !isTeamMatch) || !contest || activeTab !== 'rankings') return;
     const status = contest.status || getStatus();
     if (status !== 'running') return;
     const interval = setInterval(fetchRankings, 15000); // refresh every 15s
     return () => clearInterval(interval);
-  }, [activeTab, id, contest, fetchRankings, getStatus]);
+  }, [activeTab, id, isTeamMatch, contest, fetchRankings, getStatus]);
 
   const handleRegister = async () => {
-    if (!user || !id || registering) return;
+    if (!user || registering) return;
     setRegistering(true);
     try {
-      await api.registerContest(Number(id));
+      if (isTeamMatch) {
+        await api.registerTeamContest(Number(teamId), Number(matchId));
+      } else {
+        await api.registerContest(Number(id));
+      }
       setRegistered(true);
     } catch (e: any) {
       setLoadError(e.message || t('common.error'));
@@ -315,7 +453,7 @@ export default function ContestDetail() {
       <div className="empty-container">
         <AlertCircle size={48} style={{ color: 'var(--text-secondary)', opacity: 0.4 }} />
         <h2>{loadError || t('contests.contestNotFound')}</h2>
-        <Link to="/contests" className="btn btn-primary">{t('contests.backToContests')}</Link>
+        <Link to={isTeamMatch ? `/team/${teamId}` : '/matches'} className="btn btn-primary">{t('contests.backToContests')}</Link>
       </div>
     );
   }
@@ -339,7 +477,7 @@ export default function ContestDetail() {
               return (
                 <Link
                   key={problem.id}
-                  to={`/problems/${problem.slug || problem.id}`}
+                  to={`${matchRoot}/problem/${problem.id}`}
                   className={`nav-problem-btn ${selectedProblem === problem.slug ? 'active' : ''}`}
                   onClick={() => setSelectedProblem(problem.slug)}
                 >
@@ -352,7 +490,7 @@ export default function ContestDetail() {
             })}
           </div>
           <div className="nav-sidebar-footer">
-            <Link to={`/contests/${id}`} className="nav-sidebar-link">
+            <Link to={matchRoot} className="nav-sidebar-link">
               <Trophy size={14} /> {t('contests.rankings')}
             </Link>
           </div>
@@ -361,7 +499,7 @@ export default function ContestDetail() {
 
       <div className="contest-main-content">
         <div className="breadcrumb">
-          <Link to="/contests">{t('contests.title')}</Link>
+          <Link to={isTeamMatch ? `/team/${teamId}` : '/matches'}>{isTeamMatch ? t('teams.title') : t('contests.title')}</Link>
           <ChevronRight size={14} />
           <span>{contest.title}</span>
         </div>
@@ -374,7 +512,11 @@ export default function ContestDetail() {
             </div>
             <div className="contest-badges">
               {contest.scoring_type && (
-                <span className="badge badge-info">{contest.scoring_type === 'ioi' ? t('contests.ioiType') : t('contests.acmType')}</span>
+                <span className="badge badge-info">
+                  {contest.scoring_type === 'oi' ? t('contests.oiType')
+                    : contest.scoring_type === 'ioi' ? t('contests.ioiType')
+                    : t('contests.icpcType')}
+                </span>
               )}
               {contest.is_rated && (
                 <span className="badge badge-success">{t('contests.ratedContest')}</span>
@@ -412,8 +554,8 @@ export default function ContestDetail() {
 
           {user && (
             <div className="contest-actions">
-              {(user.role === 'admin' || user.role === 'super_admin') && (
-                <Link to={`/contests/${id}/edit`} className="btn btn-secondary btn-sm">
+              {(user.role === 'admin' || user.role === 'super_admin') && !isTeamMatch && (
+                <Link to={`${matchRoot}/edit`} className="btn btn-secondary btn-sm">
                   <Edit3 size={14} />
                   {t('contests.editContest')}
                 </Link>
@@ -472,6 +614,18 @@ export default function ContestDetail() {
           >
             {t('contests.rankings')}
           </button>
+          <button
+            className={`tab-btn ${activeTab === 'announcements' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('announcements'); fetchAnnouncements(); }}
+          >
+            <Bell size={14} /> {t('contests.announcements')}
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'clarifications' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('clarifications'); fetchClarifications(); }}
+          >
+            <MessageSquare size={14} /> {t('contests.clarifications')}
+          </button>
           {isEnded && (
             <button
               className={`tab-btn ${activeTab === 'review' ? 'active' : ''}`}
@@ -481,6 +635,91 @@ export default function ContestDetail() {
             </button>
           )}
         </div>
+
+        {/* Announcements Tab */}
+        {activeTab === 'announcements' && (
+          <div className="contest-announcements">
+            {isHost && (
+              <div className="tab-actions">
+                <button className="btn btn-primary btn-sm" onClick={() => setShowAnnouncementForm(!showAnnouncementForm)}>
+                  <Plus size={14} /> {t('contests.publishAnnouncement')}
+                </button>
+              </div>
+            )}
+            {showAnnouncementForm && (
+              <div className="card form-card" style={{ marginBottom: 12 }}>
+                <input className="form-input" placeholder={t('contests.announcementTitle')} value={annTitle}
+                  onChange={(e) => setAnnTitle(e.target.value)} />
+                <textarea className="form-input form-textarea" rows={3} placeholder={t('contests.announcementContent')}
+                  value={annContent} onChange={(e) => setAnnContent(e.target.value)} />
+                <div className="form-actions">
+                  <button className="btn btn-primary" onClick={handlePublishAnnouncement}>{t('common.submit')}</button>
+                </div>
+              </div>
+            )}
+            {announcements.length === 0 ? (
+              <div className="empty-state"><Bell size={32} /><p>{t('contests.noAnnouncements')}</p></div>
+            ) : (
+              <div className="announcement-list">
+                {announcements.map((a: any) => (
+                  <div key={a.id} className="card announcement-item" style={{ padding: 12, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h4 style={{ margin: 0 }}>{a.is_pinned ? '📌 ' : ''}{a.title}</h4>
+                      {isHost && (
+                        <button className="btn-icon-sm danger" onClick={() => handleDeleteAnnouncement(a.id)}>
+                          <X size={13} />
+                        </button>
+                      )}
+                    </div>
+                    <p style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{a.content}</p>
+                    <small style={{ color: 'var(--text-secondary)' }}>{a.username} · {new Date(a.created_at).toLocaleString()}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Clarifications Tab */}
+        {activeTab === 'clarifications' && (
+          <div className="contest-clarifications">
+            <div className="card form-card" style={{ marginBottom: 12 }}>
+              <textarea className="form-input form-textarea" rows={2} placeholder={t('contests.questionPlaceholder')}
+                value={clarQuestion} onChange={(e) => setClarQuestion(e.target.value)} />
+              <div className="form-actions">
+                <button className="btn btn-primary" onClick={handleAskQuestion} disabled={!clarQuestion.trim()}>
+                  <Send size={14} /> {t('contests.askQuestion')}
+                </button>
+              </div>
+            </div>
+            {clarifications.length === 0 ? (
+              <div className="empty-state"><MessageSquare size={32} /><p>{t('contests.noClarifications')}</p></div>
+            ) : (
+              <div className="clarification-list">
+                {clarifications.map((cl: any) => (
+                  <div key={cl.id} className="card" style={{ padding: 12, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <strong>{cl.username}: {cl.question}</strong>
+                      {cl.status === 'answered' && <span className="badge badge-success">{t('contests.answer')}</span>}
+                    </div>
+                    {cl.answer ? (
+                      <p style={{ margin: '8px 0 0' }}>{cl.answer}</p>
+                    ) : isHost ? (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <input className="form-input" placeholder={t('contests.answerPlaceholder')}
+                          value={answerDrafts[cl.id] || ''}
+                          onChange={(e) => setAnswerDrafts((d) => ({ ...d, [cl.id]: e.target.value }))} />
+                        <button className="btn btn-primary btn-sm" onClick={() => handleAnswerClarification(cl.id)}>
+                          {t('contests.answer')}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Problems Tab */}
         {activeTab === 'problems' && (
@@ -507,7 +746,7 @@ export default function ContestDetail() {
                         </span>
                       </span>
                     <span className="col-title">
-                      <Link to={`/problems/${problem.slug || problem.id}`} className="problem-link">
+                      <Link to={`${matchRoot}/problem/${problem.id}`} className="problem-link">
                         {problem.title}
                       </Link>
                     </span>
@@ -555,7 +794,7 @@ export default function ContestDetail() {
                   <span className="col-rank">#</span>
                   <span className="col-user">{t('contests.user')}</span>
                   <span className="col-score">{t('contests.totalScore')}</span>
-                  {rankingsMeta.scoring_type !== 'ioi' && (
+                  {rankingsMeta.scoring_type === 'icpc' && (
                     <span className="col-penalty">{t('contests.penalty')}</span>
                   )}
                   {rankingProblems.map((cp: any) => (
@@ -574,7 +813,7 @@ export default function ContestDetail() {
                       </Link>
                     </span>
                     <span className="col-score">{entry.total_score ?? 0}</span>
-                    {rankingsMeta.scoring_type !== 'ioi' && (
+                    {rankingsMeta.scoring_type === 'icpc' && (
                       <span className="col-penalty">{formatPenalty(entry.total_penalty ?? 0)}</span>
                     )}
                     {rankingProblems.map((cp: any) => {
@@ -611,7 +850,7 @@ export default function ContestDetail() {
                       <span className="review-problem-title">{problem.title}</span>
                     </div>
                     <div className="review-problem-actions">
-                      <Link to={`/problems/${problem.slug || problem.id}`} className="btn btn-sm btn-outline">
+                      <Link to={`${matchRoot}/problem/${problem.id}`} className="btn btn-sm btn-outline">
                         <Eye size={14} /> {t('contests.viewProblem')}
                       </Link>
                       <Link to={`/solutions?problem_id=${problem.id}&problem_title=${encodeURIComponent(problem.title)}`} className="btn btn-sm btn-outline">
@@ -647,7 +886,7 @@ export default function ContestDetail() {
                     <span className="col-rank">#</span>
                     <span className="col-user">{t('contests.user')}</span>
                     <span className="col-score">{t('contests.totalScore')}</span>
-                    <span className="col-penalty">{t('contests.penalty')}</span>
+                    {rankingsMeta.scoring_type === 'icpc' && <span className="col-penalty">{t('contests.penalty')}</span>}
                     {rankingProblems.map((cp: any) => (
                       <span key={cp.label} className="col-problem">{cp.label}</span>
                     ))}
@@ -661,7 +900,7 @@ export default function ContestDetail() {
                         <Link to={`/users/${entry.username}`} className="user-link">{entry.username}</Link>
                       </span>
                       <span className="col-score">{entry.total_score ?? 0}</span>
-                      <span className="col-penalty">{formatPenalty(entry.total_penalty ?? 0)}</span>
+                      {rankingsMeta.scoring_type === 'icpc' && <span className="col-penalty">{formatPenalty(entry.total_penalty ?? 0)}</span>}
                       {rankingProblems.map((cp: any) => {
                         const result = entry.problems?.[cp.label];
                         return (

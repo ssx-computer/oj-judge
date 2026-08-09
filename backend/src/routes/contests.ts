@@ -11,10 +11,12 @@ const contestCreateLimiter = createRateLimiter('contest_create', 10, 60_000);
 const contestRegisterLimiter = createRateLimiter('contest_register', 5, 60_000);
 const virtualRegisterLimiter = createRateLimiter('virtual_register', 5, 60_000);
 
-const VALID_SCORING_TYPES = ['acm', 'ioi'];
+const VALID_SCORING_TYPES = ['oi', 'icpc', 'ioi'];
 
-function normalizeScoringType(s: any): 'acm' | 'ioi' {
-  return s === 'ioi' ? 'ioi' : 'acm';
+function normalizeScoringType(s: any): 'oi' | 'icpc' | 'ioi' {
+  if (s === 'oi') return 'oi';
+  if (s === 'ioi') return 'ioi';
+  return 'icpc'; // default + legacy 'acm' both map to icpc
 }
 
 // List contests
@@ -229,6 +231,45 @@ contests.get('/:id/problems', authMiddleware, async (c) => {
   return c.json({ success: true, data: { problems: problems.results } });
 });
 
+// Get a single contest problem detail (protected by contest status:
+// upcoming invisible, running requires registration)
+contests.get('/:id/problems/:slug', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id')!);
+  const slug = c.req.param('slug')!;
+
+  const contest = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1;
+  const isParticipant = !!(await c.env.DB.prepare(
+    'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+  ).bind(id, user.userId).first());
+
+  const contestStatus = (contest as any).status;
+  if (contestStatus === 'upcoming' && !isAdmin) {
+    return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
+  }
+  if (contestStatus === 'running' && !isAdmin && !isParticipant) {
+    return c.json({ success: false, error: { message: 'You must register for this contest first', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const problem = await c.env.DB.prepare(
+    `SELECT cp.label, cp.score, p.id, p.title, p.slug, p.description, p.input_format,
+            p.output_format, p.time_limit, p.memory_limit, p.difficulty, p.tags, p.judge_type
+     FROM contest_problems cp JOIN problems p ON cp.problem_id = p.id
+     WHERE cp.contest_id = ? AND ${/^\d+$/.test(slug) ? 'p.id' : 'p.slug'} = ?`
+  ).bind(id, /^\d+$/.test(slug) ? parseInt(slug) : slug).first();
+
+  if (!problem) {
+    return c.json({ success: false, error: { message: 'Problem not found in this contest', code: 'NOT_FOUND' } }, 404);
+  }
+
+  return c.json({ success: true, data: { problem } });
+});
+
 // Register for contest
 contests.post('/:id/register', authMiddleware, contestRegisterLimiter, async (c) => {
   const user = c.get('user');
@@ -297,22 +338,29 @@ contests.get('/:id/rankings', async (c) => {
   const allSubmissions = await c.env.DB.prepare(
     `SELECT id, user_id, problem_id, status, score, time_used, created_at FROM submissions
      WHERE user_id IN (${placeholders}) AND problem_id IN (${problemPlaceholders})
+     AND contest_id = ?
      AND status != 'pending' AND status != 'running'
      AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`
-  ).bind(...userIds, ...problemIds, (contest as any).start_time, (contest as any).end_time).all();
+  ).bind(...userIds, ...problemIds, id, (contest as any).start_time, (contest as any).end_time).all();
 
   // Group submissions by user_id and problem_id
   const bestSubs: Record<string, any> = {};
+  const lastSubs: Record<string, any> = {};   // OI: last submission per problem
   const attemptCounts: Record<string, number> = {};
   const firstAcceptedAt: Record<string, string> = {};
 
   for (const sub of allSubmissions.results as any[]) {
     const key = `${sub.user_id}:${sub.problem_id}`;
     attemptCounts[key] = (attemptCounts[key] || 0) + 1;
-    // Find best submission (ACM and IOI both use best score)
+    // Find best submission (ICPC and IOI both use best score)
     const existing = bestSubs[key];
     if (!existing || sub.score > existing.score || (sub.score === existing.score && sub.time_used < existing.time_used)) {
       bestSubs[key] = sub;
+    }
+    // OI: keep the latest submission (by created_at)
+    const prevLast = lastSubs[key];
+    if (!prevLast || new Date(sub.created_at) > new Date(prevLast.created_at)) {
+      lastSubs[key] = sub;
     }
     if (sub.status === 'accepted') {
       if (!firstAcceptedAt[key] || new Date(sub.created_at) < new Date(firstAcceptedAt[key])) {
@@ -362,19 +410,37 @@ contests.get('/:id/rankings', async (c) => {
       const wrongAttempts = wrongBeforeAccepted[key] || 0;
 
       if (bestSub) {
-        problemResults[label] = {
-          status: bestSub.status,
-          score: bestSub.score || 0,
-          time_used: bestSub.time_used || 0,
-          attempts,
-          wrong_attempts: wrongAttempts,
-        };
-        if (scoringType === 'ioi') {
+        if (scoringType === 'oi') {
+          // OI: last submission counts, scored by test points
+          const lastSub = lastSubs[key];
+          problemResults[label] = {
+            status: lastSub ? lastSub.status : bestSub.status,
+            score: lastSub ? (lastSub.score || 0) : 0,
+            time_used: lastSub ? (lastSub.time_used || 0) : 0,
+            attempts,
+            wrong_attempts: 0,
+          };
+          totalScore += lastSub ? (lastSub.score || 0) : 0;
+        } else if (scoringType === 'ioi') {
           // IOI: best score across all attempts, no penalty
+          problemResults[label] = {
+            status: bestSub.status,
+            score: bestSub.score || 0,
+            time_used: bestSub.time_used || 0,
+            attempts,
+            wrong_attempts: wrongAttempts,
+          };
           totalScore += bestSub.score || 0;
           if (bestSub.status === 'accepted') acceptedCount++;
         } else {
-          // ACM: best score, penalty on AC
+          // ICPC: best score, penalty on AC
+          problemResults[label] = {
+            status: bestSub.status,
+            score: bestSub.score || 0,
+            time_used: bestSub.time_used || 0,
+            attempts,
+            wrong_attempts: wrongAttempts,
+          };
           if (bestSub.status === 'accepted') {
             acceptedCount++;
             totalScore += bestSub.score || score;
@@ -423,6 +489,22 @@ contests.get('/:id/rankings', async (c) => {
     prevPenalty = r.total_penalty;
   }
 
+  // OI 赛制赛时:隐藏每题得分/状态,保留排名(比赛结束后自动解禁)
+  const oiRunning = scoringType === 'oi' && (contest as any).status === 'running';
+  if (oiRunning) {
+    for (const r of rankings) {
+      r.total_score = null;
+      r.accepted_count = null;
+      r.total_penalty = null;
+      const probs: any = r.problems;
+      for (const label of Object.keys(probs || {})) {
+        if (probs[label]) {
+          probs[label] = { ...probs[label], status: 'pending', score: null, time_used: null };
+        }
+      }
+    }
+  }
+
   return c.json({
     success: true,
     data: {
@@ -431,6 +513,7 @@ contests.get('/:id/rankings', async (c) => {
       scoring_type: scoringType,
       is_rated: (contest as any).is_rated || 0,
       rating_finalized: (contest as any).rating_finalized || 0,
+      result_hidden: oiRunning ? 1 : 0,
     },
   });
 });
@@ -471,9 +554,10 @@ contests.get('/:id/my-status', authMiddleware, async (c) => {
   const submissions = await c.env.DB.prepare(
     `SELECT problem_id, status, score FROM submissions
      WHERE user_id = ? AND problem_id IN (${problemPlaceholders})
+     AND contest_id = ?
      AND status != 'pending' AND status != 'running'
      AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`
-  ).bind(user.userId, ...problemIds, (contest as any).start_time, (contest as any).end_time).all();
+  ).bind(user.userId, ...problemIds, id, (contest as any).start_time, (contest as any).end_time).all();
 
   // Build per-problem status
   const problemStatus: Record<string, { status: string; score: number; best_score: number }> = {};
@@ -493,6 +577,16 @@ contests.get('/:id/my-status', authMiddleware, async (c) => {
     } else if (existing.status === 'unattempted') {
       existing.status = sub.status;
       existing.score = sub.score;
+    }
+  }
+
+  // OI 赛制赛时:不向选手泄露评测状态(保持未评测显示)
+  const scoringType = normalizeScoringType((contest as any).scoring_type);
+  if (scoringType === 'oi' && (contest as any).status === 'running') {
+    for (const label of Object.keys(problemStatus)) {
+      if (problemStatus[label].status !== 'unattempted') {
+        problemStatus[label] = { status: 'pending', score: 0, best_score: 0 };
+      }
     }
   }
 
@@ -745,6 +839,194 @@ contests.get('/:id/rating-changes', async (c) => {
       changes: results.results,
     },
   });
+});
+
+// ============================================================
+// 赛时公告
+// ============================================================
+
+// GET /contests/:id/announcements — 公告列表(公开)
+contests.get('/:id/announcements', async (c) => {
+  const id = parseInt(c.req.param('id'));
+
+  const contest = await c.env.DB.prepare('SELECT id FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const results = await c.env.DB.prepare(
+    `SELECT a.id, a.title, a.content, a.is_pinned, a.created_at, a.updated_at,
+            u.id as user_id, u.username
+     FROM contest_announcements a JOIN users u ON a.user_id = u.id
+     WHERE a.contest_id = ?
+     ORDER BY a.is_pinned DESC, a.created_at DESC`
+  ).bind(id).all();
+
+  return c.json({ success: true, data: { announcements: results.results } });
+});
+
+// POST /contests/:id/announcements — 发布公告(主办方/admin)
+contests.post('/:id/announcements', authMiddleware, contestAdminMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const body = await c.req.json();
+  const { title, content, is_pinned } = body;
+
+  if (!title || !content) {
+    return c.json({ success: false, error: { message: 'title and content are required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const contest = await c.env.DB.prepare('SELECT id FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const result = await c.env.DB.prepare(
+    'INSERT INTO contest_announcements (contest_id, user_id, title, content, is_pinned) VALUES (?, ?, ?, ?, ?)'
+  ).bind(id, user.userId, title, content, is_pinned ? 1 : 0).run();
+
+  return c.json({ success: true, data: { id: result.meta.last_row_id, message: 'Announcement published' } }, 201);
+});
+
+// PUT /contests/:id/announcements/:announcementId — 编辑公告(主办方/admin)
+contests.put('/:id/announcements/:announcementId', authMiddleware, contestAdminMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id') || '0');
+  const announcementId = parseInt(c.req.param('announcementId') || '0');
+  const body = await c.req.json();
+
+  const announcement: any = await c.env.DB.prepare(
+    'SELECT id FROM contest_announcements WHERE id = ? AND contest_id = ?'
+  ).bind(announcementId, id).first();
+  if (!announcement) {
+    return c.json({ success: false, error: { message: 'Announcement not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE contest_announcements SET
+       title = COALESCE(?, title), content = COALESCE(?, content),
+       is_pinned = COALESCE(?, is_pinned), updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND contest_id = ?`
+  ).bind(
+    body.title ?? null,
+    body.content ?? null,
+    body.is_pinned !== undefined ? (body.is_pinned ? 1 : 0) : null,
+    announcementId, id
+  ).run();
+
+  return c.json({ success: true, data: { message: 'Announcement updated' } });
+});
+
+// DELETE /contests/:id/announcements/:announcementId — 删除公告(主办方/admin)
+contests.delete('/:id/announcements/:announcementId', authMiddleware, contestAdminMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id') || '0');
+  const announcementId = parseInt(c.req.param('announcementId') || '0');
+
+  const announcement: any = await c.env.DB.prepare(
+    'SELECT id FROM contest_announcements WHERE id = ? AND contest_id = ?'
+  ).bind(announcementId, id).first();
+  if (!announcement) {
+    return c.json({ success: false, error: { message: 'Announcement not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.prepare('DELETE FROM contest_announcements WHERE id = ? AND contest_id = ?').bind(announcementId, id).run();
+  return c.json({ success: true, data: { message: 'Announcement deleted' } });
+});
+
+// ============================================================
+// 赛时私密答疑(选手提问 -> 主办方回答,禁止公开提问)
+// ============================================================
+
+// GET /contests/:id/clarifications — 答疑列表
+// 选手只能看到自己的提问;主办方/admin 可看到全部
+contests.get('/:id/clarifications', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+
+  const contest = await c.env.DB.prepare('SELECT id FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const isHost = user.userId === 1 || user.role === 'admin' || user.role === 'super_admin'
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
+
+  let query = `SELECT cl.id, cl.contest_id, cl.user_id, cl.question, cl.answer, cl.status,
+                      cl.created_at, cl.answered_at, u.username
+               FROM contest_clarifications cl JOIN users u ON cl.user_id = u.id
+               WHERE cl.contest_id = ?`;
+  const binds: any[] = [id];
+  if (!isHost) {
+    query += ' AND cl.user_id = ?';
+    binds.push(user.userId);
+  }
+  query += ' ORDER BY cl.created_at DESC';
+
+  const results = await c.env.DB.prepare(query).bind(...binds).all();
+
+  return c.json({ success: true, data: { clarifications: results.results } });
+});
+
+// POST /contests/:id/clarifications — 选手提交提问(仅已报名选手)
+contests.post('/:id/clarifications', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const body = await c.req.json();
+  const { question } = body;
+
+  if (!question || !question.trim()) {
+    return c.json({ success: false, error: { message: 'question is required', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (question.length > 2000) {
+    return c.json({ success: false, error: { message: 'question must be at most 2000 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const contest: any = await c.env.DB.prepare('SELECT id, status FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if ((contest as any).status === 'upcoming') {
+    return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
+  }
+
+  // 仅已报名(参赛)选手可提问
+  const participant = await c.env.DB.prepare(
+    'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+  ).bind(id, user.userId).first();
+  if (!participant) {
+    return c.json({ success: false, error: { message: 'You must register for this contest first', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const result = await c.env.DB.prepare(
+    'INSERT INTO contest_clarifications (contest_id, user_id, question) VALUES (?, ?, ?)'
+  ).bind(id, user.userId, question.trim()).run();
+
+  return c.json({ success: true, data: { id: result.meta.last_row_id, message: 'Question submitted' } }, 201);
+});
+
+// PUT /contests/:id/clarifications/:clarificationId — 主办方回答
+contests.put('/:id/clarifications/:clarificationId', authMiddleware, contestAdminMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const clarificationId = parseInt(c.req.param('clarificationId') || '0');
+  const body = await c.req.json();
+
+  if (!body.answer || !body.answer.trim()) {
+    return c.json({ success: false, error: { message: 'answer is required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const clarification: any = await c.env.DB.prepare(
+    'SELECT id, status FROM contest_clarifications WHERE id = ? AND contest_id = ?'
+  ).bind(clarificationId, id).first();
+  if (!clarification) {
+    return c.json({ success: false, error: { message: 'Clarification not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE contest_clarifications SET answer = ?, answered_by = ?, status = 'answered', answered_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND contest_id = ?`
+  ).bind(body.answer.trim(), user.userId, clarificationId, id).run();
+
+  return c.json({ success: true, data: { message: 'Answer submitted' } });
 });
 
 export default contests;

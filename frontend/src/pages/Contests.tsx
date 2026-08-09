@@ -78,7 +78,7 @@ export default function Contests() {
         </div>
 
         {perms.canManageContests && (
-          <Link to="/contests/new" className="btn btn-primary btn-sm">
+          <Link to="/match/new" className="btn btn-primary btn-sm">
             <PlusCircle size={14} />
             {t('contests.createContest')}
           </Link>
@@ -118,7 +118,7 @@ export default function Contests() {
             return (
               <Link
                 key={contest.id}
-                to={`/contests/${contest.id}`}
+                to={`/match/${contest.id}`}
                 className="contest-card"
               >
                 <div className="contest-card-header">

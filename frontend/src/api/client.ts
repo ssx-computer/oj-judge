@@ -303,6 +303,12 @@ interface TeamMember {
   joined_at: string;
   username?: string;
   avatar_url?: string;
+  note?: string;
+  group_id?: number | null;
+  group_name?: string;
+  can_edit_problems?: number;
+  can_edit_contests?: number;
+  can_edit_lists?: number;
 }
 
 interface TeamAnnouncement {
@@ -855,6 +861,10 @@ class ApiClient {
     return this.request<{ problem: Problem; sampleTestcases: Testcase[]; stats: ProblemStats }>(`/problems/${slug}`);
   }
 
+  async getContestProblem(contestId: string, slug: string) {
+    return this.request<{ problem: Problem }>(`/contests/${contestId}/problems/${slug}`);
+  }
+
   async getProblemLanguages(slug: string) {
     return this.request<{ languages: string[] }>(`/problems/${slug}/languages`);
   }
@@ -884,7 +894,7 @@ class ApiClient {
     });
   }
 
-  async submitCode(data: { problem_id: number; language: string; source_code: string; captcha_uuid?: string; captcha_answer?: string }) {
+  async submitCode(data: { problem_id: number; language: string; source_code: string; captcha_uuid?: string; captcha_answer?: string; contest_id?: number; team_contest_id?: number }) {
     return this.request<{ submission_id: number; status: string }>('/submissions', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -2000,6 +2010,81 @@ class ApiClient {
     return this.request<{ rankings: ContestRanking[] }>(`/teams/${teamId}/contests/${contestId}/rankings`);
   }
 
+  // 团队私有题目详情(仅团队成员可见)
+  async getTeamProblem(teamId: number, problemId: number) {
+    return this.request<{ problem: Problem; sampleTestcases?: Testcase[]; spj_code?: string }>(`/teams/${teamId}/problems/${problemId}`);
+  }
+
+  // 团队比赛单题详情(比赛前仅主办方可见,运行中仅成员可见)
+  async getTeamContestProblem(teamId: number, contestId: number, problemId: number) {
+    return this.request<{ problem: Problem; sampleTestcases?: Testcase[]; spj_code?: string }>(`/teams/${teamId}/contests/${contestId}/problems/${problemId}`);
+  }
+
+  // ── Team Private Problems (团队私有题目) ──
+  async getTeamProblems(teamId: number, params?: { page?: number; pageSize?: number; search?: string }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.pageSize) query.set('pageSize', String(params.pageSize));
+    if (params?.search) query.set('search', params.search);
+    return this.request<{ problems: any[]; pagination: Pagination }>(`/teams/${teamId}/problems?${query.toString()}`);
+  }
+  async createTeamProblem(teamId: number, data: Record<string, unknown>) {
+    return this.request<{ id: number; message: string }>(`/teams/${teamId}/problems`, { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateTeamProblem(teamId: number, problemId: number, data: Record<string, unknown>) {
+    return this.request<{ message: string }>(`/teams/${teamId}/problems/${problemId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async deleteTeamProblem(teamId: number, problemId: number) {
+    return this.request<{ message: string }>(`/teams/${teamId}/problems/${problemId}`, { method: 'DELETE' });
+  }
+
+  // ── Team Groups (分组) ──
+  async getTeamGroups(teamId: number) {
+    return this.request<{ groups: { id: number; name: string; sort_order: number; member_count: number }[] }>(`/teams/${teamId}/groups`);
+  }
+  async createTeamGroup(teamId: number, data: { name: string; sort_order?: number }) {
+    return this.request<{ id: number; message: string }>(`/teams/${teamId}/groups`, { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateTeamGroup(teamId: number, groupId: number, data: { name?: string; sort_order?: number }) {
+    return this.request<{ message: string }>(`/teams/${teamId}/groups/${groupId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async deleteTeamGroup(teamId: number, groupId: number) {
+    return this.request<{ message: string }>(`/teams/${teamId}/groups/${groupId}`, { method: 'DELETE' });
+  }
+
+  // ── Team Member note / group / permissions ──
+  async updateTeamMemberNote(teamId: number, userId: number, note: string) {
+    return this.request<{ message: string }>(`/teams/${teamId}/members/${userId}/note`, { method: 'PUT', body: JSON.stringify({ note }) });
+  }
+  async updateTeamMemberGroup(teamId: number, userId: number, groupId: number | null) {
+    return this.request<{ message: string }>(`/teams/${teamId}/members/${userId}/group`, { method: 'PUT', body: JSON.stringify({ group_id: groupId }) });
+  }
+  async updateTeamMemberPermissions(teamId: number, userId: number, data: { can_edit_problems?: boolean; can_edit_contests?: boolean; can_edit_lists?: boolean }) {
+    return this.request<{ message: string }>(`/teams/${teamId}/members/${userId}/permissions`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  // ── Team contest announcements (团队比赛赛时公告) ──
+  async getTeamContestAnnouncements(teamId: number, contestId: number) {
+    return this.request<{ announcements: { id: number; title: string; content: string; is_pinned: number; created_at: string; user_id: number; username: string }[] }>(`/teams/${teamId}/contests/${contestId}/announcements`);
+  }
+  async createTeamContestAnnouncement(teamId: number, contestId: number, data: { title: string; content: string; is_pinned?: boolean }) {
+    return this.request<{ id: number; message: string }>(`/teams/${teamId}/contests/${contestId}/announcements`, { method: 'POST', body: JSON.stringify(data) });
+  }
+  async deleteTeamContestAnnouncement(teamId: number, contestId: number, announcementId: number) {
+    return this.request<{ message: string }>(`/teams/${teamId}/contests/${contestId}/announcements/${announcementId}`, { method: 'DELETE' });
+  }
+
+  // ── Team contest clarifications (团队比赛赛时私密答疑) ──
+  async getTeamContestClarifications(teamId: number, contestId: number) {
+    return this.request<{ clarifications: { id: number; team_contest_id: number; user_id: number; question: string; answer: string | null; status: string; created_at: string; answered_at: string | null; username: string }[] }>(`/teams/${teamId}/contests/${contestId}/clarifications`);
+  }
+  async createTeamContestClarification(teamId: number, contestId: number, question: string) {
+    return this.request<{ id: number; message: string }>(`/teams/${teamId}/contests/${contestId}/clarifications`, { method: 'POST', body: JSON.stringify({ question }) });
+  }
+  async answerTeamContestClarification(teamId: number, contestId: number, clarificationId: number, answer: string) {
+    return this.request<{ message: string }>(`/teams/${teamId}/contests/${contestId}/clarifications/${clarificationId}`, { method: 'PUT', body: JSON.stringify({ answer }) });
+  }
+
   async addTeamContestProblem(teamId: number, contestId: number, data: { problem_id: number; sort_order?: number; score?: number }) {
     return this.request<{ message: string }>(`/teams/${teamId}/contests/${contestId}/problems`, { method: 'POST', body: JSON.stringify(data) });
   }
@@ -2130,6 +2215,31 @@ class ApiClient {
   // Get rating changes for a finalized contest
   async getContestRatingChanges(contestId: number) {
     return this.request<{ contest: Contest; changes: RatingChange[] }>(`/contests/${contestId}/rating-changes`);
+  }
+
+  // ── Contest announcements (赛时公告) ──
+  async getContestAnnouncements(contestId: number) {
+    return this.request<{ announcements: { id: number; title: string; content: string; is_pinned: number; created_at: string; user_id: number; username: string }[] }>(`/contests/${contestId}/announcements`);
+  }
+  async createContestAnnouncement(contestId: number, data: { title: string; content: string; is_pinned?: boolean }) {
+    return this.request<{ id: number; message: string }>(`/contests/${contestId}/announcements`, { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateContestAnnouncement(contestId: number, announcementId: number, data: Record<string, unknown>) {
+    return this.request<{ message: string }>(`/contests/${contestId}/announcements/${announcementId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async deleteContestAnnouncement(contestId: number, announcementId: number) {
+    return this.request<{ message: string }>(`/contests/${contestId}/announcements/${announcementId}`, { method: 'DELETE' });
+  }
+
+  // ── Contest clarifications (赛时私密答疑) ──
+  async getContestClarifications(contestId: number) {
+    return this.request<{ clarifications: { id: number; contest_id: number; user_id: number; question: string; answer: string | null; status: string; created_at: string; answered_at: string | null; username: string }[] }>(`/contests/${contestId}/clarifications`);
+  }
+  async createContestClarification(contestId: number, question: string) {
+    return this.request<{ id: number; message: string }>(`/contests/${contestId}/clarifications`, { method: 'POST', body: JSON.stringify({ question }) });
+  }
+  async answerContestClarification(contestId: number, clarificationId: number, answer: string) {
+    return this.request<{ message: string }>(`/contests/${contestId}/clarifications/${clarificationId}`, { method: 'PUT', body: JSON.stringify({ answer }) });
   }
 
   // ─────────────────────────────────────────────────────────────

@@ -147,6 +147,48 @@ export default function AdminProblems() {
     }
   };
 
+  const parseFpsXml = (xmlText: string): Record<string, unknown>[] => {
+    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+    const items = Array.from(doc.querySelectorAll('item'));
+    const decode = (s: string) => {
+      const t = s.trim();
+      try {
+        return t ? atob(t.replace(/\s+/g, '')) : '';
+      } catch {
+        return s;
+      }
+    };
+    return items
+      .map((item, idx) => {
+        const get = (tag: string) => item.querySelector(tag)?.textContent?.trim() || '';
+        const testcases: Record<string, unknown>[] = [];
+        const si = get('sample_input');
+        if (si) {
+          testcases.push({ input: si, expected_output: get('sample_output'), is_sample: true, score: 10 });
+        }
+        const ti = get('test_input');
+        const to = get('test_output');
+        if (ti && to) {
+          testcases.push({ input: decode(ti), expected_output: decode(to), is_sample: false, score: 90 });
+        }
+        return {
+          title: get('title'),
+          slug: `fps-${Date.now().toString(36)}-${idx}`,
+          description: get('description'),
+          input_format: get('input') || null,
+          output_format: get('output') || null,
+          time_limit: parseInt(get('time_limit') || '1000', 10) || 1000,
+          memory_limit: parseInt(get('memory_limit') || '256', 10) || 256,
+          tags: [],
+          difficulty: 'Easy',
+          is_public: true,
+          judge_type: 'default',
+          testcases,
+        };
+      })
+      .filter((p) => p.title);
+  };
+
   const handleImportProblems = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -158,9 +200,15 @@ export default function AdminProblems() {
 
     try {
       const text = await file.text();
-      appendActionLog(t('admin.importLogParseJson'));
-      const payload = JSON.parse(text);
-      const problems = Array.isArray(payload) ? payload : payload.problems || [];
+      let problems: Record<string, unknown>[];
+      if (file.name.toLowerCase().endsWith('.xml') || text.trim().startsWith('<fps')) {
+        appendActionLog(t('admin.importLogParseFps'));
+        problems = parseFpsXml(text);
+      } else {
+        appendActionLog(t('admin.importLogParseJson'));
+        const payload = JSON.parse(text);
+        problems = Array.isArray(payload) ? payload : payload.problems || [];
+      }
       appendActionLog(t('admin.importLogCount').replace('{0}', String(problems.length)));
       appendActionLog(t('admin.importLogUploading'));
 

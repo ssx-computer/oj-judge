@@ -1,17 +1,58 @@
 # OJ System
 
-这是一个基于 Cloudflare Workers 的在线判题系统，覆盖题目管理、用户认证、提交评测、竞赛、讨论、题单、后台管理与可选广告位配置。
+<p align="center">
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/wanwusangzhigit/eoj/ci.yml?branch=main" />
+  <img alt="License" src="https://img.shields.io/github/license/wanwusangzhigit/eoj" />
+  <img alt="Language" src="https://img.shields.io/badge/language-TypeScript-blue" />
+  <img alt="Frontend" src="https://img.shields.io/badge/frontend-React%2019-61dafb" />
+  <img alt="Backend" src="https://img.shields.io/badge/backend-Hono-orange" />
+  <img alt="Database" src="https://img.shields.io/badge/database-Cloudflare%20D1-ff69b4" />
+  <img alt="Judge" src="https://img.shields.io/badge/judge-nsjail%20sandbox-brightgreen" />
+  <img alt="Website" src="https://img.shields.io/badge/website-oj.wanwusangzhi.top-blue" />
+</p>
 
-> **UI 主题**：本仓库提供三种前端视觉风格，可通过 `frontend/config.yaml` 中的 `site.theme` 字段切换：
-> - **`default`**（默认）— 暗色为主，大圆角（10px），靛蓝渐变强调色，全宽导航栏
-> - **`luogu`** — 洛谷风格复刻，50px 蓝粉渐变顶栏 + 240px 左侧边栏双栏布局，9 级难度色板，3-4px 小圆角扁平设计
-> - **`hydro`** — HydroOJ 风格，蓝色主调 `#5f9fd6`，完全扁平（border-radius: 0），极简设计，浅灰背景
+<p align="center">
+  <img alt="GitHub stars" src="https://img.shields.io/github/stars/wanwusangzhigit/eoj?style=social" />
+  <img alt="GitHub forks" src="https://img.shields.io/github/forks/wanwusangzhigit/eoj?style=social" />
+  <img alt="GitHub watchers" src="https://img.shields.io/github/watchers/wanwusangzhigit/eoj?style=social" />
+</p>
 
-## 特别提醒
-本项目许可证是基于MIT的自定义许可证。
-### 修改的地方如下
-- 如果您使用本项目盈利，您需要在产品上线/发布之日起30个工作日内通知`13818403352@163.com`，谢谢
-## 技术栈
+基于 **Cloudflare Workers + GitHub Actions** 的现代在线判题系统（Online Judge），覆盖题目管理、用户认证、提交评测、竞赛、讨论、题单、后台管理与可选广告位配置。
+
+## ✨ 功能特性
+
+| 功能模块 | 说明 |
+|---------|------|
+| 题目管理 | CRUD、测试用例管理、SPJ、难度标签、通过率统计 |
+| 提交评测 | 代码提交、GitHub Actions 异步判题（nsjail 沙箱）、SPJ 支持、判题详情 |
+| 竞赛系统 | ACM/IOI 计分、虚拟参赛、Rating 计算、排行榜(15s轮询)、封榜 |
+| 用户系统 | GitHub/CpOAuth/密码登录、个人资料编辑、用户关注、封禁系统 |
+| 题单 | 题目集合 CRUD、排序、分享 |
+| 题解 | 发布、投票(赞/踩)、审核工作流 |
+| 讨论区 | 题目关联讨论、全局讨论、回复 |
+| 工单系统 | 分类工单、处理状态流转、管理员处理 |
+| 团队功能 | 团队管理、团队竞赛、题目集 |
+| 博客 | 发布/编辑、标签、评论、状态管理 |
+| 代码模板 | 多语言模板保存/加载、题目编辑器集成 |
+| 笔记 | 题目笔记、公开/私有 |
+| 收藏集 | 题目收藏夹、自定义集合 |
+| 训练计划 | 章节化训练、进度追踪 |
+| AI 助手 | 流式对话、工具调用、多模型支持 |
+| 通知系统 | SSE 实时推送 + 轮询回退、邮件通知 |
+| 消息系统 | 站内私信、会话管理 |
+| 成就系统 | 成就解锁、展示 |
+| 全站搜索 | 题目/用户/博客/讨论多类型搜索、关键词高亮、搜索建议 |
+| 管理后台 | 仪表盘(图表统计)、用户/题目/竞赛/工单/封禁管理、SQL 编辑器 |
+| 权限体系 | 细粒度权限(problem_admin/contest_admin 等) + 超级管理员 |
+| 审计日志 | 操作记录、IP/设备封禁、审计搜索 |
+| 站点设置 | 注册开关、邮箱限制、OAuth 配置、广告位配置 |
+| 广告位 | Adsense 集成、多位置配置 |
+| 安全防护 | JWT 认证、bcrypt 密码、验证码、Rate Limit、CORS、安全响应头 |
+| 多主题 | Default(暗色)/Luogu(洛谷复刻)/Hydro(HydroOJ) 三套风格 |
+| 国际化 | 中英文双语 i18n |
+| 密码重置 | 邮箱验证码、忘记密码/重置密码流程 |
+
+## 🛠 技术栈
 
 | 层级 | 技术 |
 |------|------|
@@ -21,10 +62,32 @@
 | 认证 | GitHub OAuth + CpOAuth + JWT + bcrypt |
 | 状态管理 | Zustand |
 | 代码编辑器 | CodeMirror 6 |
-| 评测引擎 | GitHub Actions |
+| 评测引擎 | GitHub Actions + nsjail 沙箱（seccomp 隔离） |
 | 样式 | CSS Variables + 自定义 CSS |
 
-## 部署指南
+## 🏗 项目结构
+
+```
+├── backend/     # Cloudflare Workers 后端（Hono + D1）
+├── frontend/    # React 19 + TypeScript + Vite 前端
+└── judge-repo/  # 评测引擎（nsjail 沙箱 + GitHub Actions workflow）
+```
+
+## 🎨 主题
+
+本仓库提供三种前端视觉风格，可通过 `frontend/config.yaml` 中的 `site.theme` 字段切换：
+
+- **`default`**（默认）— 暗色为主，大圆角（10px），靛蓝渐变强调色，全宽导航栏
+- **`luogu`** — 洛谷风格复刻，50px 蓝粉渐变顶栏 + 240px 左侧边栏双栏布局，9 级难度色板，3-4px 小圆角扁平设计
+- **`hydro`** — HydroOJ 风格，蓝色主调 `#5f9fd6`，完全扁平（border-radius: 0），极简设计，浅灰背景
+
+## 📄 License
+
+本项目许可证是基于 MIT 的自定义许可证。
+
+> **特别提醒**：如果您使用本项目盈利，您需要在产品上线/发布之日起 30 个工作日内通知 `13818403352@163.com`，谢谢。
+
+## 🚀 部署指南
 
 ### 前置要求
 
@@ -191,7 +254,7 @@ curl https://你的域名/__seed
 | 强制填写邮箱 | 注册时邮箱为必填项 | 关闭 |
 | 邮箱后缀限制 | 允许的邮箱后缀（逗号分隔），留空不限制 | 空 |
 
-## 本地开发
+## 🖥 本地开发
 
 ```bash
 # 终端 1：后端
@@ -221,40 +284,7 @@ npx wrangler d1 migrations apply DB --local
 npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as cnt FROM users"
 ```
 
-## 功能特性
-
-| 功能模块 | 说明 |
-|---------|------|
-| 题目管理 | CRUD、测试用例管理、SPJ、难度标签、通过率统计 |
-| 提交评测 | 代码提交、GitHub Actions 异步判题、SPJ 支持、判题详情 |
-| 竞赛系统 | ACM/IOI 计分、虚拟参赛、Rating 计算、排行榜(15s轮询)、封榜 |
-| 用户系统 | GitHub/CpOAuth/密码登录、个人资料编辑、用户关注、封禁系统 |
-| 题单 | 题目集合 CRUD、排序、分享 |
-| 题解 | 发布、投票(赞/踩)、审核工作流 |
-| 讨论区 | 题目关联讨论、全局讨论、回复 |
-| 工单系统 | 分类工单、处理状态流转、管理员处理 |
-| 团队功能 | 团队管理、团队竞赛、题目集 |
-| 博客 | 发布/编辑、标签、评论、状态管理 |
-| 代码模板 | 多语言模板保存/加载、题目编辑器集成 |
-| 笔记 | 题目笔记、公开/私有 |
-| 收藏集 | 题目收藏夹、自定义集合 |
-| 训练计划 | 章节化训练、进度追踪 |
-| AI 助手 | 流式对话、工具调用、多模型支持 |
-| 通知系统 | SSE 实时推送 + 轮询回退、邮件通知 |
-| 消息系统 | 站内私信、会话管理 |
-| 成就系统 | 成就解锁、展示 |
-| 全站搜索 | 题目/用户/博客/讨论多类型搜索、关键词高亮、搜索建议 |
-| 管理后台 | 仪表盘(图表统计)、用户/题目/竞赛/工单/封禁管理、SQL 编辑器 |
-| 权限体系 | 细粒度权限(problem_admin/contest_admin 等) + 超级管理员 |
-| 审计日志 | 操作记录、IP/设备封禁、审计搜索 |
-| 站点设置 | 注册开关、邮箱限制、OAuth 配置、广告位配置 |
-| 广告位 | Adsense 集成、多位置配置 |
-| 安全防护 | JWT 认证、bcrypt 密码、验证码、Rate Limit、CORS、安全响应头 |
-| 多主题 | Default(暗色)/Luogu(洛谷复刻)/Hydro(HydroOJ) 三套风格 |
-| 国际化 | 中英文双语 i18n |
-| 密码重置 | 邮箱验证码、忘记密码/重置密码流程 |
-
-## API 概览
+## 🔌 API 概览
 
 所有接口返回统一格式：`{ success: true, data: {...} }` 或 `{ success: false, error: { message, code } }`
 
@@ -274,7 +304,7 @@ npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as cnt FROM users"
 | 管理 | `/api/v1/admin` | 管理员专用接口 |
 | 内部 | `/api/v1/internal` | 评测回调（GitHub Actions 调用） |
 
-## 数据库表
+## 🗄 数据库表
 
 | 表名 | 说明 |
 |------|------|
@@ -297,6 +327,5 @@ npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as cnt FROM users"
 | rate_limits | 限流记录 |
 | settings | 站点设置（键值对） |
 
-## License
 
-MIT
+

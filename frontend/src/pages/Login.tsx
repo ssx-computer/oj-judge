@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { useSettingsStore } from '../store/settings';
 import { api } from '../api/client';
@@ -13,7 +13,8 @@ const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
 export default function Login() {
   const { user, setToken, fetchUser } = useAuthStore();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const location = useLocation();
+  const [mode, setMode] = useState<'login' | 'register'>(location.pathname === '/register' ? 'register' : 'login');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -142,6 +143,11 @@ export default function Login() {
         setError(t('login.passwordTooShort'));
         return;
       }
+      // Client-side mirror of the backend complexity rule (upper+lower+digit).
+      if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+        setError(t('login.passwordComplexity'));
+        return;
+      }
       if (password !== confirmPassword) {
         setError(t('login.passwordMismatch'));
         return;
@@ -219,15 +225,23 @@ export default function Login() {
               </button>
             </div>
           ) : (
-            <div className="auth-toggle">
-              <button
-                type="button"
-                className="toggle-btn active"
-                disabled
-              >
-                {t('login.login')}
-              </button>
-            </div>
+            <>
+              <div className="auth-toggle">
+                <button
+                  type="button"
+                  className="toggle-btn active"
+                  disabled
+                >
+                  {t('login.login')}
+                </button>
+              </div>
+              <div style={{ textAlign: 'center', padding: '8px 0', fontSize: 13, color: '#8b949e' }}>
+                <span>{t('login.registrationClosed')}</span>{' '}
+                <Link to="/contact" style={{ color: 'var(--accent, #58a6ff)' }}>
+                  {t('login.contactAdmin')}
+                </Link>
+              </div>
+            </>
           )}
 
           <form className="auth-form" onSubmit={handleSubmit}>

@@ -6,6 +6,7 @@ import {
   Users, UserMinus, LogOut, Trophy, ArrowLeft, Bell, MessageSquare,
   BookOpen, Swords, Shield, Check, X, Plus, Send, Star, Eye,
   Calendar, Clock, UserPlus, Settings, UserCog, Flag,
+  List, FolderOpen, Trash2, Code2, Save,
 } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -13,10 +14,10 @@ import { useAuthStore } from '../store/auth';
 import { useToastStore } from '../store/toast';
 import './Teams.css';
 
-type Tab = 'overview' | 'announcements' | 'discussions' | 'problemSets' | 'contests' | 'members' | 'rankings' | 'settings';
+type Tab = 'overview' | 'announcements' | 'discussions' | 'problemSets' | 'contests' | 'members' | 'rankings' | 'settings' | 'problems' | 'groups';
 
 export default function TeamDetail() {
-  const { slug } = useParams<{ slug: string }>();
+  const { teamId } = useParams<{ teamId: string }>();
   const { user } = useAuthStore();
   const addToast = useToastStore((s) => s.addToast);
   const [team, setTeam] = useState<any>(null);
@@ -27,10 +28,10 @@ export default function TeamDetail() {
   useDocumentTitle(team?.name || t('teams.title'));
 
   const fetchTeam = useCallback(async () => {
-    if (!slug) return;
+    if (!teamId) return;
     setLoading(true);
     try {
-      const data = await api.getTeam(slug);
+      const data = await api.getTeam(teamId);
       setTeam(data.team);
       setMembers(data.members);
       setAnnouncements(data.announcements || []);
@@ -39,7 +40,7 @@ export default function TeamDetail() {
     } finally {
       setLoading(false);
     }
-  }, [slug, addToast]);
+  }, [teamId, addToast]);
 
   useEffect(() => {
     const load = async () => { fetchTeam(); };
@@ -94,9 +95,11 @@ export default function TeamDetail() {
     { key: 'overview', icon: Users, label: t('teams.overview') },
     { key: 'announcements', icon: Bell, label: t('teams.announcements') },
     { key: 'discussions', icon: MessageSquare, label: t('teams.discussions') },
-    { key: 'problemSets', icon: BookOpen, label: t('teams.problemSets') },
+    { key: 'problems', icon: BookOpen, label: t('teams.problemBank') },
+    { key: 'problemSets', icon: List, label: t('teams.problemSets') },
     { key: 'contests', icon: Swords, label: t('teams.teamContests') },
     { key: 'members', icon: Users, label: t('teams.members') },
+    { key: 'groups', icon: FolderOpen, label: t('teams.groupManagement') },
     { key: 'rankings', icon: Trophy, label: t('teams.teamRankings') },
     ...(canManage ? [{ key: 'settings' as Tab, icon: Settings, label: t('teams.teamSettings') }] : []),
   ];
@@ -174,6 +177,9 @@ export default function TeamDetail() {
         {tab === 'discussions' && (
           <DiscussionsTab teamId={team.id} isMember={isMember} />
         )}
+        {tab === 'problems' && (
+          <ProblemsTab teamId={team.id} isMember={isMember} />
+        )}
         {tab === 'problemSets' && (
           <ProblemSetsTab teamId={team.id} isMember={isMember} />
         )}
@@ -185,6 +191,9 @@ export default function TeamDetail() {
             teamId={team.id} members={members} isOwner={isOwner} isSiteAdmin={isSiteAdmin}
             onRemove={handleRemoveMember} onRefresh={fetchTeam}
           />
+        )}
+        {tab === 'groups' && (
+          <GroupsTab teamId={team.id} members={members} canManage={canManage} onRefresh={fetchTeam} />
         )}
         {tab === 'rankings' && (
           <RankingsTab teamId={team.id} />
@@ -432,6 +441,240 @@ function DiscussionsTab({ teamId, isMember }: { teamId: number; isMember: boolea
   );
 }
 
+// ===== Problems Tab (团队私有题库) =====
+function ProblemsTab({ teamId, isMember }: { teamId: number; isMember: boolean }) {
+  const addToast = useToastStore((s) => s.addToast);
+  const [list, setList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<any>({
+    title: '', slug: '', description: '', input_format: '', output_format: '',
+    time_limit: 1000, memory_limit: 256, tags: '', difficulty: 'Easy', testcases: '',
+  });
+
+  const fetchProblems = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.getTeamProblems(teamId, { pageSize: 50 });
+      setList(data.problems || []);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [teamId]);
+
+  useEffect(() => {
+    fetchProblems();
+  }, [fetchProblems]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.title || !form.slug || !form.description) {
+      addToast('error', t('admin.titleRequired'));
+      return;
+    }
+    try {
+      let testcases;
+      if (form.testcases && form.testcases.trim()) {
+        try { testcases = JSON.parse(form.testcases); } catch { addToast('error', t('teams.testcasesHint')); return; }
+      }
+      await api.createTeamProblem(teamId, {
+        title: form.title, slug: form.slug, description: form.description,
+        input_format: form.input_format, output_format: form.output_format,
+        time_limit: form.time_limit, memory_limit: form.memory_limit,
+        tags: form.tags ? form.tags.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+        difficulty: form.difficulty, testcases,
+      });
+      addToast('success', t('teams.problemCreated'));
+      setForm({ title: '', slug: '', description: '', input_format: '', output_format: '', time_limit: 1000, memory_limit: 256, tags: '', difficulty: 'Easy', testcases: '' });
+      setShowForm(false);
+      fetchProblems();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handleDelete = async (problemId: number) => {
+    if (!window.confirm(t('teams.confirmDeleteProblem'))) return;
+    try {
+      await api.deleteTeamProblem(teamId, problemId);
+      addToast('success', t('teams.problemDeleted'));
+      fetchProblems();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  if (loading) return <LoadingSpinner />;
+  return (
+    <div>
+      {isMember && (
+        <div className="tab-actions">
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
+            <Plus size={14} /> {t('teams.createProblem')}
+          </button>
+        </div>
+      )}
+      {showForm && (
+        <form className="card form-card" onSubmit={handleCreate}>
+          <div className="form-row">
+            <label>{t('teams.problemTitle')} <input className="form-input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
+            <label>{t('teams.problemSlug')} <input className="form-input" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} required /></label>
+          </div>
+          <label>{t('teams.problemDescription')} <textarea className="form-input form-textarea" rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} required /></label>
+          <div className="form-row">
+            <label>{t('teams.inputFormat')} <textarea className="form-input form-textarea" rows={2} value={form.input_format} onChange={(e) => setForm({ ...form, input_format: e.target.value })} /></label>
+            <label>{t('teams.outputFormat')} <textarea className="form-input form-textarea" rows={2} value={form.output_format} onChange={(e) => setForm({ ...form, output_format: e.target.value })} /></label>
+          </div>
+          <div className="form-row">
+            <label>{t('teams.problemTimeLimit')} <input className="form-input" type="number" value={form.time_limit} onChange={(e) => setForm({ ...form, time_limit: parseInt(e.target.value) })} /></label>
+            <label>{t('teams.problemMemoryLimit')} <input className="form-input" type="number" value={form.memory_limit} onChange={(e) => setForm({ ...form, memory_limit: parseInt(e.target.value) })} /></label>
+            <label>{t('teams.problemDifficulty')}
+              <select className="form-input form-select" value={form.difficulty} onChange={(e) => setForm({ ...form, difficulty: e.target.value })}>
+                <option value="Easy">Easy</option>
+                <option value="Medium">Medium</option>
+                <option value="Hard">Hard</option>
+              </select>
+            </label>
+          </div>
+          <label>{t('teams.problemTags')} <input className="form-input" placeholder="tag1,tag2" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} /></label>
+          <label>{t('teams.testcases')} <textarea className="form-input form-textarea" rows={3} placeholder={t('teams.testcasesHint')} value={form.testcases} onChange={(e) => setForm({ ...form, testcases: e.target.value })} /></label>
+          <div className="form-actions"><button type="submit" className="btn btn-primary"><Save size={14} /> {t('common.submit')}</button></div>
+        </form>
+      )}
+      {list.length === 0 ? <div className="empty-state"><BookOpen size={32} /><p>{t('teams.noProblems')}</p></div> : (
+        <div className="problem-list">
+          {list.map((p) => (
+            <div key={p.id} className="problem-row">
+              <Link to={`/team/${teamId}/problem/${p.id}`}>{p.title}</Link>
+              <span className={`diff-badge diff-${p.difficulty?.toLowerCase()}`}>{p.difficulty}</span>
+              {isMember && (
+                <span className="member-actions">
+                  <Link to={`/team/${teamId}/problem/${p.id}`} className="btn-icon-sm" title={t('teams.editProblem')}><Code2 size={13} /></Link>
+                  <button className="btn-icon-sm danger" onClick={() => handleDelete(p.id)} title={t('teams.deleteProblem')}><Trash2 size={13} /></button>
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Groups Tab (分组管理) =====
+function GroupsTab({ teamId, members, canManage, onRefresh }: { teamId: number; members: any[]; canManage: boolean; onRefresh: () => void }) {
+  const addToast = useToastStore((s) => s.addToast);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState('');
+
+  const fetchGroups = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.getTeamGroups(teamId);
+      setGroups(data.groups || []);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [teamId]);
+
+  useEffect(() => {
+    fetchGroups();
+  }, [fetchGroups]);
+
+  const handleCreate = async () => {
+    if (!name.trim()) return;
+    try {
+      await api.createTeamGroup(teamId, { name: name.trim() });
+      addToast('success', t('teams.groupCreated'));
+      setName('');
+      setShowForm(false);
+      fetchGroups();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handleDelete = async (groupId: number) => {
+    if (!window.confirm(t('teams.groupDeleted') + '?')) return;
+    try {
+      await api.deleteTeamGroup(teamId, groupId);
+      addToast('success', t('teams.groupDeleted'));
+      fetchGroups();
+      onRefresh();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handleAssign = async (userId: number, groupId: number | null) => {
+    try {
+      await api.updateTeamMemberGroup(teamId, userId, groupId);
+      addToast('success', t('teams.groupAssigned'));
+      onRefresh();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  if (loading) return <LoadingSpinner />;
+  return (
+    <div>
+      {canManage && (
+        <div className="tab-actions">
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
+            <Plus size={14} /> {t('teams.createGroup')}
+          </button>
+        </div>
+      )}
+      {showForm && (
+        <div className="card form-card">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="form-input" placeholder={t('teams.groupName')} value={name} onChange={(e) => setName(e.target.value)} />
+            <button className="btn btn-primary btn-sm" onClick={handleCreate}><Save size={14} /> {t('common.submit')}</button>
+          </div>
+        </div>
+      )}
+      <div className="groups-list">
+        {groups.map((g: any) => (
+          <div key={g.id} className="card" style={{ padding: 12, marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h4 style={{ margin: 0 }}>{g.name} <small style={{ color: 'var(--text-secondary)' }}>({g.member_count})</small></h4>
+              {canManage && (
+                <button className="btn-icon-sm danger" onClick={() => handleDelete(g.id)}><Trash2 size={13} /></button>
+              )}
+            </div>
+            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {members.filter((m: any) => m.group_id === g.id).map((m: any) => (
+                <span key={m.user_id} className="badge">{m.username}</span>
+              ))}
+              {members.filter((m: any) => m.group_id === g.id).length === 0 && (
+                <small style={{ color: 'var(--text-secondary)' }}>{t('teams.noGroup')}</small>
+              )}
+            </div>
+          </div>
+        ))}
+        {groups.length === 0 && <div className="empty-state"><FolderOpen size={32} /><p>{t('teams.noGroups')}</p></div>}
+      </div>
+      {canManage && members.length > 0 && (
+        <div className="card form-card" style={{ marginTop: 12 }}>
+          <h4>{t('teams.assignGroup')}</h4>
+          {members.filter((m: any) => m.role !== 'owner').map((m: any) => (
+            <div key={m.user_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
+              <span>{m.username}</span>
+              <select className="form-input form-select" style={{ width: 200 }}
+                value={m.group_id || ''}
+                onChange={(e) => handleAssign(m.user_id, e.target.value ? parseInt(e.target.value) : null)}>
+                <option value="">{t('teams.noGroup')}</option>
+                {groups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Problem Sets Tab =====
 function ProblemSetsTab({ teamId, isMember }: { teamId: number; isMember: boolean }) {
   const addToast = useToastStore((s) => s.addToast);
@@ -508,7 +751,7 @@ function ProblemSetsTab({ teamId, isMember }: { teamId: number; isMember: boolea
           <div className="problem-list" style={{ marginTop: 12 }}>
             {selectedSet.problems.map((p: any) => (
               <div key={p.id} className="problem-row">
-                <Link to={`/problems/${p.slug}`}>{p.title}</Link>
+                <Link to={`/team/${teamId}/problem/${p.problem_id}`}>{p.title}</Link>
                 <span className={`diff-badge diff-${p.difficulty?.toLowerCase()}`}>{p.difficulty}</span>
                 {p.solved && <span className="badge badge-success"><Check size={12} /> {t('problemList.accepted')}</span>}
               </div>
@@ -561,7 +804,7 @@ function ContestsTab({ teamId, canManage }: { teamId: number; canManage: boolean
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', start_time: '', end_time: '', scoring_type: 'acm', is_public: false });
+  const [form, setForm] = useState({ title: '', description: '', start_time: '', end_time: '', scoring_type: 'icpc', is_public: false });
 
   const fetchContests = useCallback(async () => {
     setLoading(true);
@@ -583,7 +826,7 @@ function ContestsTab({ teamId, canManage }: { teamId: number; canManage: boolean
     try {
       await api.createTeamContest(teamId, form);
       addToast('success', t('common.success'));
-      setForm({ title: '', description: '', start_time: '', end_time: '', scoring_type: 'acm', is_public: false });
+      setForm({ title: '', description: '', start_time: '', end_time: '', scoring_type: 'icpc', is_public: false });
       setShowForm(false);
       fetchContests();
     } catch (e: any) {
@@ -616,7 +859,8 @@ function ContestsTab({ teamId, canManage }: { teamId: number; canManage: boolean
           <div className="form-row">
             <select className="form-input form-select" value={form.scoring_type}
               onChange={(e) => setForm({ ...form, scoring_type: e.target.value })}>
-              <option value="acm">{t('teams.acmType')}</option>
+              <option value="oi">{t('teams.oiType')}</option>
+              <option value="icpc">{t('teams.icpcType')}</option>
               <option value="ioi">{t('teams.ioiType')}</option>
             </select>
             <label className="checkbox-label"><input type="checkbox" checked={form.is_public}
@@ -701,6 +945,26 @@ function MembersTab({ teamId, members, isOwner, isSiteAdmin, onRemove, onRefresh
     }
   };
 
+  const handleNoteChange = async (targetUserId: number, note: string) => {
+    try {
+      await api.updateTeamMemberNote(teamId, targetUserId, note);
+      addToast('success', t('teams.noteSaved'));
+      onRefresh();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  const handlePermissionsChange = async (targetUserId: number, perm: 'can_edit_problems' | 'can_edit_contests' | 'can_edit_lists', value: boolean) => {
+    try {
+      await api.updateTeamMemberPermissions(teamId, targetUserId, { [perm]: value } as any);
+      addToast('success', t('teams.permissionsSaved'));
+      onRefresh();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
   return (
     <div>
       {/* Join Requests */}
@@ -723,7 +987,7 @@ function MembersTab({ teamId, members, isOwner, isSiteAdmin, onRemove, onRefresh
       {/* Members */}
       <div className="members-list">
         {members.map((m: any, idx: number) => (
-          <div key={m.user_id} className="member-row">
+          <div key={m.user_id} className="member-row" style={{ flexWrap: 'wrap' }}>
             <span className="rank">{idx + 1}</span>
             {m.avatar_url ? (
               <img src={m.avatar_url} alt={m.username} className="member-avatar" />
@@ -735,6 +999,7 @@ function MembersTab({ teamId, members, isOwner, isSiteAdmin, onRemove, onRefresh
               {m.role === 'owner' ? t('teams.owner') : m.role === 'admin' ? t('teams.admin') : t('teams.member')}
             </span>
             <span className="member-stats">{t('teams.solvedCount')}: {m.accepted_count || 0}</span>
+            {m.group_name && <span className="badge">{m.group_name}</span>}
             {(isOwner || isSiteAdmin) && m.role !== 'owner' && (
               <div className="member-actions">
                 {isOwner && m.role !== 'admin' && (
@@ -750,6 +1015,34 @@ function MembersTab({ teamId, members, isOwner, isSiteAdmin, onRemove, onRefresh
                 <button className="btn-icon-sm danger" onClick={() => onRemove(m.user_id)} title={t('teams.removeMember')}>
                   <UserMinus size={13} />
                 </button>
+              </div>
+            )}
+            {(isOwner || isSiteAdmin) && m.role !== 'owner' && (
+              <div style={{ width: '100%', display: 'flex', gap: 12, alignItems: 'center', marginTop: 4 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {t('teams.memberNote')}:
+                  <input className="form-input" style={{ width: 140 }} placeholder={t('teams.notePlaceholder')}
+                    defaultValue={m.note || ''}
+                    onBlur={(e) => { if (e.target.value !== (m.note || '')) handleNoteChange(m.user_id, e.target.value); }} />
+                </label>
+                <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {t('teams.permissions')}:
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={m.can_edit_problems === 1}
+                      onChange={(e) => handlePermissionsChange(m.user_id, 'can_edit_problems', e.target.checked)} />
+                    {t('teams.permissionProblems')}
+                  </label>
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={m.can_edit_contests === 1}
+                      onChange={(e) => handlePermissionsChange(m.user_id, 'can_edit_contests', e.target.checked)} />
+                    {t('teams.permissionContests')}
+                  </label>
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={m.can_edit_lists === 1}
+                      onChange={(e) => handlePermissionsChange(m.user_id, 'can_edit_lists', e.target.checked)} />
+                    {t('teams.permissionLists')}
+                  </label>
+                </span>
               </div>
             )}
           </div>

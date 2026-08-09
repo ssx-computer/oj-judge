@@ -29,9 +29,9 @@ export default function CreateTeam() {
     }
     setSubmitting(true);
     try {
-      await api.createTeam(form);
+      const data = await api.createTeam(form);
       addToast('success', t('teams.teamCreated'));
-      navigate(`/teams/${form.slug}`);
+      navigate(`/team/${data.id}`);
     } catch (e: any) {
       addToast('error', e.message || t('common.error'));
     } finally {

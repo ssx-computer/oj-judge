@@ -8,10 +8,35 @@ import { captchaMiddleware } from '../middleware/captcha';
 
 const submissions = new Hono<AppType>();
 
+// OI 赛制赛时隐藏评测结果:比赛运行中且赛制为 oi 时,非主办方用户看不到状态/得分
+async function getHiddenOIContestIds(db: D1Database, ids: number[]): Promise<Set<number>> {
+  const cleanIds = [...new Set(ids.filter((x) => x))];
+  if (cleanIds.length === 0) return new Set();
+  const placeholders = cleanIds.map(() => '?').join(',');
+  const rows = await db.prepare(
+    `SELECT id FROM contests WHERE id IN (${placeholders}) AND scoring_type = 'oi' AND status = 'running'`
+  ).bind(...cleanIds).all();
+  return new Set((rows.results as any[]).map((r) => r.id));
+}
+
+function canViewOIResult(user: any): boolean {
+  if (!user) return false;
+  return user.userId === 1 || user.role === 'admin' || user.role === 'super_admin'
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
+}
+
+function hideSubmissionResult(sub: any): void {
+  sub.status = 'pending';
+  sub.score = null;
+  sub.time_used = null;
+  sub.memory_used = null;
+  sub.judge_message = null;
+}
+
 submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMiddleware, async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
-  const { problem_id, language, source_code } = body;
+  const { problem_id, language, source_code, contest_id, team_contest_id } = body;
 
   if (!problem_id || !language || !source_code) {
     return c.json({ success: false, error: { message: 'problem_id, language, and source_code are required', code: 'BAD_REQUEST' } }, 400);
@@ -27,7 +52,7 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
     return c.json({ success: false, error: { message: codeError, code: 'BAD_REQUEST' } }, 400);
   }
 
-  const problem = await c.env.DB.prepare('SELECT id, time_limit, memory_limit FROM problems WHERE id = ? AND is_public = 1')
+  const problem = await c.env.DB.prepare('SELECT id, time_limit, memory_limit, is_public FROM problems WHERE id = ?')
     .bind(problem_id)
     .first();
 
@@ -35,11 +60,77 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
     return c.json({ success: false, error: { message: 'Problem not found', code: 'NOT_FOUND' } }, 404);
   }
 
+  // Team-private problem (is_public=0): only team members can submit
+  if ((problem as any).is_public !== 1) {
+    const teamProblem = await c.env.DB.prepare(
+      'SELECT tp.team_id FROM team_problems tp JOIN team_members tm ON tm.team_id = tp.team_id WHERE tp.problem_id = ? AND tm.user_id = ?'
+    ).bind(problem_id, user.userId).first();
+    if (!teamProblem) {
+      return c.json({ success: false, error: { message: 'You are not a member of the team owning this problem', code: 'FORBIDDEN' } }, 403);
+    }
+  }
+
+  // Contest-scoped submission: the contest must be running, the user must be
+  // registered, and the problem must belong to the contest.
+  let contestSubmissionId: number | null = null;
+  if (contest_id) {
+    const contest = await c.env.DB.prepare(
+      'SELECT id, status FROM contests WHERE id = ?'
+    ).bind(contest_id).first();
+    if (!contest) {
+      return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+    }
+    if ((contest as any).status !== 'running') {
+      return c.json({ success: false, error: { message: 'Contest is not running', code: 'FORBIDDEN' } }, 403);
+    }
+    const participant = await c.env.DB.prepare(
+      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+    ).bind(contest_id, user.userId).first();
+    if (!participant) {
+      return c.json({ success: false, error: { message: 'You must register for this contest first', code: 'FORBIDDEN' } }, 403);
+    }
+    const cp = await c.env.DB.prepare(
+      'SELECT id FROM contest_problems WHERE contest_id = ? AND problem_id = ?'
+    ).bind(contest_id, problem_id).first();
+    if (!cp) {
+      return c.json({ success: false, error: { message: 'Problem is not part of this contest', code: 'BAD_REQUEST' } }, 400);
+    }
+    contestSubmissionId = Number(contest_id);
+  }
+
+  // Team-contest-scoped submission: the team contest must be running, the user
+  // must be a team member, and the problem must belong to the team contest.
+  let teamContestSubmissionId: number | null = null;
+  if (team_contest_id) {
+    const teamContest = await c.env.DB.prepare(
+      'SELECT tc.id, tc.team_id, tc.status FROM team_contests tc WHERE tc.id = ?'
+    ).bind(team_contest_id).first();
+    if (!teamContest) {
+      return c.json({ success: false, error: { message: 'Team contest not found', code: 'NOT_FOUND' } }, 404);
+    }
+    if ((teamContest as any).status !== 'running') {
+      return c.json({ success: false, error: { message: 'Team contest is not running', code: 'FORBIDDEN' } }, 403);
+    }
+    const member = await c.env.DB.prepare(
+      'SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?'
+    ).bind((teamContest as any).team_id, user.userId).first();
+    if (!member) {
+      return c.json({ success: false, error: { message: 'You are not a member of this team', code: 'FORBIDDEN' } }, 403);
+    }
+    const tcp = await c.env.DB.prepare(
+      'SELECT id FROM team_contest_problems WHERE team_contest_id = ? AND problem_id = ?'
+    ).bind(team_contest_id, problem_id).first();
+    if (!tcp) {
+      return c.json({ success: false, error: { message: 'Problem is not part of this team contest', code: 'BAD_REQUEST' } }, 400);
+    }
+    teamContestSubmissionId = Number(team_contest_id);
+  }
+
   const result = await c.env.DB.prepare(
-    `INSERT INTO submissions (user_id, problem_id, language, source_code, status)
-     VALUES (?, ?, ?, ?, 'pending')`
+    `INSERT INTO submissions (user_id, problem_id, language, source_code, status, contest_id, team_contest_id)
+     VALUES (?, ?, ?, ?, 'pending', ?, ?)`
   )
-    .bind(user.userId, problem_id, language, source_code)
+    .bind(user.userId, problem_id, language, source_code, contestSubmissionId, teamContestSubmissionId)
     .run();
 
   const submissionId = result.meta.last_row_id;
@@ -101,7 +192,7 @@ submissions.get('/', authMiddleware, async (c) => {
 
   const isAdmin = user.role === 'admin' || user.role === 'super_admin';
 
-  let query = 'SELECT s.id, s.user_id, s.problem_id, s.language, s.status, s.score, s.time_used, s.memory_used, s.created_at, p.title as problem_title, p.slug as problem_slug, u.username FROM submissions s JOIN problems p ON s.problem_id = p.id JOIN users u ON s.user_id = u.id WHERE 1=1';
+  let query = 'SELECT s.id, s.user_id, s.problem_id, s.language, s.status, s.score, s.time_used, s.memory_used, s.created_at, s.contest_id, p.title as problem_title, p.slug as problem_slug, u.username FROM submissions s JOIN problems p ON s.problem_id = p.id JOIN users u ON s.user_id = u.id WHERE 1=1';
   let countQuery = 'SELECT COUNT(*) as total FROM submissions WHERE 1=1';
   const binds: any[] = [];
   const countBinds: any[] = [];
@@ -148,10 +239,21 @@ submissions.get('/', authMiddleware, async (c) => {
 
   const results = await c.env.DB.prepare(query).bind(...binds, pageSize, offset).all();
 
+  // OI 赛制赛时:非主办方用户隐藏评测结果
+  const rows = results.results as any[];
+  if (!canViewOIResult(user)) {
+    const hiddenIds = await getHiddenOIContestIds(c.env.DB, rows.map((r) => r.contest_id));
+    if (hiddenIds.size > 0) {
+      for (const r of rows) {
+        if (hiddenIds.has(r.contest_id)) hideSubmissionResult(r);
+      }
+    }
+  }
+
   return c.json({
     success: true,
     data: {
-      submissions: results.results,
+      submissions: rows,
       pagination: {
         page,
         pageSize,
@@ -184,6 +286,12 @@ submissions.get('/:id', authMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'Submission not found', code: 'NOT_FOUND' } }, 404);
   }
 
+  // OI 赛制赛时:非主办方用户隐藏评测结果
+  if (!canViewOIResult(user)) {
+    const hiddenIds = await getHiddenOIContestIds(c.env.DB, [(submission as any).contest_id]);
+    if (hiddenIds.size > 0) hideSubmissionResult(submission as any);
+  }
+
   return c.json({ success: true, data: { submission } });
 });
 
@@ -194,7 +302,7 @@ submissions.get('/:id/testcases', authMiddleware, async (c) => {
   const isAdmin = user.role === 'admin' || user.role === 'super_admin';
 
   // Verify the submission belongs to the user (or user is admin)
-  const submission = await c.env.DB.prepare('SELECT id, user_id FROM submissions WHERE id = ?')
+  const submission = await c.env.DB.prepare('SELECT id, user_id, contest_id FROM submissions WHERE id = ?')
     .bind(id)
     .first();
 
@@ -204,6 +312,14 @@ submissions.get('/:id/testcases', authMiddleware, async (c) => {
 
   if (!isAdmin && (submission as any).user_id !== user.userId) {
     return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  // OI 赛制赛时:隐藏测试点详情
+  if (!canViewOIResult(user)) {
+    const hiddenIds = await getHiddenOIContestIds(c.env.DB, [(submission as any).contest_id]);
+    if (hiddenIds.size > 0) {
+      return c.json({ success: true, data: { testcases: [] } });
+    }
   }
 
   const results = await c.env.DB.prepare(

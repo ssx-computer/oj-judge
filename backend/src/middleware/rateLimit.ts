@@ -59,18 +59,34 @@ export async function rateLimitMiddleware(c: Context<AppType>, next: Next) {
 export function createRateLimiter(prefix: string, maxRequests: number, windowMs: number) {
   return async (c: Context<AppType>, next: Next) => {
     const user = c.get('user');
-    // For unauthenticated routes (login/register), use IP as key
-    const key = user ? `${prefix}:${user.userId}` : `${prefix}:ip:${c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'}`;
+    // For unauthenticated routes (login/register), rate-limit by BOTH the
+    // client IP and the device fingerprint, so proxy-rotating attackers
+    // cannot bypass the limit by changing IP while keeping one fingerprint.
+    const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+    const fingerprint = c.req.header('x-device-fingerprint') || '';
+    const keys = user
+      ? [`${prefix}:${user.userId}`]
+      : [`${prefix}:ip:${ip}`, fingerprint ? `${prefix}:fp:${fingerprint}` : ''].filter(Boolean);
     const now = Date.now();
     const windowStart = now - windowMs;
     try {
       await c.env.DB.prepare("DELETE FROM rate_limits WHERE created_at < ?").bind(windowStart).run();
-      const result = await c.env.DB.prepare("SELECT COUNT(*) as count FROM rate_limits WHERE key = ? AND created_at >= ?").bind(key, windowStart).first();
-      const count = (result as any)?.count || 0;
-      if (count >= maxRequests) {
+      // Every dimension key must be under the limit.
+      let over = false;
+      for (const k of keys) {
+        const result = await c.env.DB.prepare("SELECT COUNT(*) as count FROM rate_limits WHERE key = ? AND created_at >= ?").bind(k, windowStart).first();
+        const count = (result as any)?.count || 0;
+        if (count >= maxRequests) {
+          over = true;
+          break;
+        }
+      }
+      if (over) {
         return c.json({ success: false, error: { message: `Rate limit exceeded`, code: 'RATE_LIMITED' } }, 429);
       }
-      await c.env.DB.prepare("INSERT INTO rate_limits (key, created_at) VALUES (?, ?)").bind(key, now).run();
+      for (const k of keys) {
+        await c.env.DB.prepare("INSERT INTO rate_limits (key, created_at) VALUES (?, ?)").bind(k, now).run();
+      }
       await next();
     } catch (e) {
       // Fail CLOSED on error to prevent bypassing rate limits

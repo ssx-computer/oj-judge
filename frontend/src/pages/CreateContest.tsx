@@ -24,6 +24,7 @@ export default function CreateContest() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [isPublic, setIsPublic] = useState(true);
+  const [scoringType, setScoringType] = useState<'oi' | 'icpc' | 'ioi'>('icpc');
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -45,6 +46,9 @@ export default function CreateContest() {
         setTitle(contest.title || '');
         setDescription(contest.description || '');
         setIsPublic(!!contest.is_public);
+        if (contest.scoring_type === 'oi' || contest.scoring_type === 'ioi' || contest.scoring_type === 'icpc') {
+          setScoringType(contest.scoring_type);
+        }
 
         // Format datetime for input fields (YYYY-MM-DDTHH:mm)
         if (contest.start_time) {
@@ -160,6 +164,7 @@ export default function CreateContest() {
       start_time: new Date(startTime).toISOString(),
       end_time: new Date(endTime).toISOString(),
       is_public: isPublic ? 1 : 0,
+      scoring_type: scoringType,
       problems: selectedProblems.map((p, i) => ({
         problem_id: p.id,
         label: String.fromCharCode(65 + i),
@@ -170,10 +175,10 @@ export default function CreateContest() {
     try {
       if (isEditing) {
         await api.updateContest(Number(contestId), payload);
-        navigate(`/contests/${contestId}`);
+        navigate(`/match/${contestId}`);
       } else {
         const data = await api.createContest(payload);
-        navigate(`/contests/${data.id}`);
+        navigate(`/match/${data.id}`);
       }
     } catch (e: any) {
       setError(e.message || (isEditing ? 'Failed to update contest' : 'Failed to create contest'));
@@ -185,11 +190,11 @@ export default function CreateContest() {
   return (
     <div className="create-contest-page">
       <div className="breadcrumb">
-        <Link to="/contests">{t('contests.title')}</Link>
+        <Link to="/matches">{t('contests.title')}</Link>
         <ChevronRight size={14} />
         {isEditing ? (
           <>
-            <Link to={`/contests/${contestId}`}>{title || t('contests.title')}</Link>
+            <Link to={`/match/${contestId}`}>{title || t('contests.title')}</Link>
             <ChevronRight size={14} />
             <span>{t('contests.editContest')}</span>
           </>
@@ -226,6 +231,15 @@ export default function CreateContest() {
               <label>{t('contests.endTime')}</label>
               <input type="datetime-local" className="form-input" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
             </div>
+          </div>
+
+          <div className="form-group">
+            <label>{t('contests.contestType')}</label>
+            <select className="form-input form-select" value={scoringType} onChange={(e) => setScoringType(e.target.value as 'oi' | 'icpc' | 'ioi')}>
+              <option value="oi">{t('contests.oiType')}</option>
+              <option value="icpc">{t('contests.icpcType')}</option>
+              <option value="ioi">{t('contests.ioiType')}</option>
+            </select>
           </div>
 
           <div className="form-group">
@@ -278,7 +292,7 @@ export default function CreateContest() {
           )}
 
           <div className="form-actions">
-            <button type="button" className="btn btn-secondary" onClick={() => navigate(isEditing ? `/contests/${contestId}` : '/contests')}>{t('common.cancel')}</button>
+            <button type="button" className="btn btn-secondary" onClick={() => navigate(isEditing ? `/match/${contestId}` : '/matches')}>{t('common.cancel')}</button>
             <button type="submit" className="btn btn-primary" disabled={submitting || !title.trim() || !startTime || !endTime}>
               {isEditing ? <Edit3 size={14} /> : <Send size={14} />}
               {submitting ? t('admin.saving') : (isEditing ? t('contests.saveContest') : t('contests.createContest'))}
