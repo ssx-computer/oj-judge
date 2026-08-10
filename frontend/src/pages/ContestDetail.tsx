@@ -200,7 +200,14 @@ export default function ContestDetail() {
         : await api.getContestProblems(Number(id));
       setProblems(data.problems);
     } catch (e: any) {
-      setLoadError(e.message || t('common.error'));
+      // 未报名/未开始导致的 403:属于正常业务状态,不应覆盖整页
+      // (否则报名按钮被错误页替换,用户无法报名),仅清空题目列表
+      const msg = e.message || '';
+      if (msg.includes('register') || msg.includes('started')) {
+        setProblems([]);
+      } else {
+        setLoadError(e.message || t('common.error'));
+      }
     }
     // Also fetch my status
     if (user && !isTeamMatch) {
@@ -247,16 +254,13 @@ export default function ContestDetail() {
   }, [id, isTeamMatch]);
 
   const getStatus = useCallback((): string => {
-    if (contest?.status) {
-      if (contest.status === 'pending') return 'upcoming';
-      if (contest.status === 'finished') return 'ended';
-      return contest.status;
-    }
+    // 按当前时间动态计算,与后端 effectiveContestStatus 保持一致
+    // (避免依赖可能过期的 contest.status 静态字段导致状态误判)
     const now = Date.now();
     const start = new Date(contest.start_time).getTime();
     const end = new Date(contest.end_time).getTime();
     if (now < start) return 'upcoming';
-    if (now >= start && now <= end) return 'running';
+    if (now >= start && now < end) return 'running';
     return 'ended';
   }, [contest]);
 
@@ -354,6 +358,10 @@ export default function ContestDetail() {
         await api.registerContest(Number(id));
       }
       setRegistered(true);
+      // 报名成功后:清除报名前访问题目留下的 403 错误,并重新加载题目/状态
+      setLoadError('');
+      await fetchContest();
+      await fetchProblems();
     } catch (e: any) {
       setLoadError(e.message || t('common.error'));
     } finally {
