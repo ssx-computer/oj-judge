@@ -80,7 +80,11 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
     if (!contest) {
       return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
     }
-    if ((contest as any).status !== 'running') {
+    // 按当前时间动态判定,避免 status 字段过期导致拦截失效
+    const nowMs = Date.now();
+    const cStart = new Date((contest as any).start_time).getTime();
+    const cEnd = new Date((contest as any).end_time).getTime();
+    if (!(nowMs >= cStart && nowMs < cEnd)) {
       return c.json({ success: false, error: { message: 'Contest is not running', code: 'FORBIDDEN' } }, 403);
     }
     const participant = await c.env.DB.prepare(
@@ -108,7 +112,11 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
     if (!teamContest) {
       return c.json({ success: false, error: { message: 'Team contest not found', code: 'NOT_FOUND' } }, 404);
     }
-    if ((teamContest as any).status !== 'running') {
+    // 按当前时间动态判定,避免 status 字段过期导致拦截失效
+    const tcNowMs = Date.now();
+    const tcStart = new Date((teamContest as any).start_time).getTime();
+    const tcEnd = new Date((teamContest as any).end_time).getTime();
+    if (!(tcNowMs >= tcStart && tcNowMs < tcEnd)) {
       return c.json({ success: false, error: { message: 'Team contest is not running', code: 'FORBIDDEN' } }, 403);
     }
     const member = await c.env.DB.prepare(

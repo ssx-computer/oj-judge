@@ -19,6 +19,16 @@ function normalizeScoringType(s: any): 'oi' | 'icpc' | 'ioi' {
   return 'icpc'; // default + legacy 'acm' both map to icpc
 }
 
+// 按当前时间动态计算比赛状态(不依赖可能过期的 contest.status 静态字段)
+function effectiveContestStatus(contest: any): 'upcoming' | 'running' | 'ended' {
+  const now = Date.now();
+  const start = new Date(contest.start_time).getTime();
+  const end = new Date(contest.end_time).getTime();
+  if (now >= start && now < end) return 'running';
+  if (now >= end) return 'ended';
+  return 'upcoming';
+}
+
 // List contests
 contests.get('/', async (c) => {
   const page = Math.max(1, parseInt(c.req.query('page') || '1'));
@@ -206,7 +216,8 @@ contests.get('/:id/problems', authMiddleware, async (c) => {
     'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
   ).bind(id, user.userId).first());
 
-  const contestStatus = (contest as any).status;
+  // 按当前时间动态判定,避免 status 字段过期导致拦截失效
+  const contestStatus = effectiveContestStatus(contest);
   const isRunning = contestStatus === 'running';
   const isEnded = contestStatus === 'ended';
 
@@ -248,7 +259,8 @@ contests.get('/:id/problems/:slug', authMiddleware, async (c) => {
     'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
   ).bind(id, user.userId).first());
 
-  const contestStatus = (contest as any).status;
+  // 按当前时间动态判定,避免 status 字段过期导致拦截失效
+  const contestStatus = effectiveContestStatus(contest);
   if (contestStatus === 'upcoming' && !isAdmin) {
     return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
   }
@@ -280,7 +292,7 @@ contests.post('/:id/register', authMiddleware, contestRegisterLimiter, async (c)
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
 
-  const contestStatus = (contest as any).status;
+  const contestStatus = effectiveContestStatus(contest);
   if (contestStatus === 'ended') {
     return c.json({ success: false, error: { message: 'Contest has ended', code: 'BAD_REQUEST' } }, 400);
   }
@@ -490,7 +502,7 @@ contests.get('/:id/rankings', async (c) => {
   }
 
   // OI 赛制赛时:隐藏每题得分/状态,保留排名(比赛结束后自动解禁)
-  const oiRunning = scoringType === 'oi' && (contest as any).status === 'running';
+  const oiRunning = scoringType === 'oi' && effectiveContestStatus(contest) === 'running';
   if (oiRunning) {
     for (const r of rankings) {
       r.total_score = null;
@@ -582,7 +594,7 @@ contests.get('/:id/my-status', authMiddleware, async (c) => {
 
   // OI 赛制赛时:不向选手泄露评测状态(保持未评测显示)
   const scoringType = normalizeScoringType((contest as any).scoring_type);
-  if (scoringType === 'oi' && (contest as any).status === 'running') {
+  if (scoringType === 'oi' && effectiveContestStatus(contest) === 'running') {
     for (const label of Object.keys(problemStatus)) {
       if (problemStatus[label].status !== 'unattempted') {
         problemStatus[label] = { status: 'pending', score: 0, best_score: 0 };
@@ -610,7 +622,7 @@ contests.post('/:id/virtual-register', authMiddleware, virtualRegisterLimiter, a
   }
 
   // Virtual participation only makes sense for ended contests
-  if ((contest as any).status !== 'ended') {
+  if (effectiveContestStatus(contest) !== 'ended') {
     return c.json({ success: false, error: { message: 'Virtual participation is only available for ended contests', code: 'BAD_REQUEST' } }, 400);
   }
 
@@ -652,7 +664,7 @@ contests.post('/:id/finalize', authMiddleware, adminMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'This contest is not rated', code: 'BAD_REQUEST' } }, 400);
   }
 
-  if ((contest as any).status !== 'ended') {
+  if (effectiveContestStatus(contest) !== 'ended') {
     return c.json({ success: false, error: { message: 'Contest must be ended before finalizing ratings', code: 'BAD_REQUEST' } }, 400);
   }
 
@@ -984,7 +996,7 @@ contests.post('/:id/clarifications', authMiddleware, async (c) => {
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
-  if ((contest as any).status === 'upcoming') {
+  if (effectiveContestStatus(contest) === 'upcoming') {
     return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
   }
 

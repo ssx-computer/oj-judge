@@ -38,7 +38,7 @@ problems.get('/', async (c) => {
   const difficulty = c.req.query('difficulty') || '';
   const offset = (page - 1) * pageSize;
 
-  let countQuery = 'SELECT COUNT(*) as total FROM problems WHERE is_public = 1';
+  let countQuery = 'SELECT COUNT(*) as total FROM problems WHERE is_public = 1 AND id NOT IN (SELECT problem_id FROM contest_problems) AND id NOT IN (SELECT problem_id FROM team_contest_problems)';
   let dataQuery = `
     SELECT p.id, p.title, p.slug, p.tags, p.difficulty, p.time_limit, p.memory_limit, p.judge_type, p.created_at,
            COUNT(DISTINCT s.id) as submission_count,
@@ -46,6 +46,8 @@ problems.get('/', async (c) => {
     FROM problems p
     LEFT JOIN submissions s ON p.id = s.problem_id
     WHERE p.is_public = 1
+      AND p.id NOT IN (SELECT problem_id FROM contest_problems)
+      AND p.id NOT IN (SELECT problem_id FROM team_contest_problems)
   `;
   const binds: any[] = [];
 
@@ -355,6 +357,20 @@ problems.get('/:slug', async (c) => {
     .first();
 
   if (!problem) {
+    return c.json({ success: false, error: { message: 'Problem not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 比赛关联题目不允许通过 /problems/:slug 直达(只能经 /match/:id/problem/:id 访问)
+  const inContest = await c.env.DB.prepare(
+    'SELECT 1 FROM contest_problems WHERE problem_id = ? LIMIT 1'
+  ).bind((problem as any).id).first();
+  if (inContest) {
+    return c.json({ success: false, error: { message: 'Problem not found', code: 'NOT_FOUND' } }, 404);
+  }
+  const inTeamContest = await c.env.DB.prepare(
+    'SELECT 1 FROM team_contest_problems WHERE problem_id = ? LIMIT 1'
+  ).bind((problem as any).id).first();
+  if (inTeamContest) {
     return c.json({ success: false, error: { message: 'Problem not found', code: 'NOT_FOUND' } }, 404);
   }
 
