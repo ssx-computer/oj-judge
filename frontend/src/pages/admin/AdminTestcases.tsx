@@ -7,9 +7,12 @@ import { DIFFICULTY_COLORS } from '../../constants';
 import { t } from '../../i18n';
 import {
   Plus, Save, Trash2, X, ChevronUp, ChevronDown, Upload, Download, FileArchive,
+  FileCheck, FileText, Gauge, Inbox, AlertCircle, CheckSquare, Copy, Pencil,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import '../Admin.css';
+// 复用团队测试数据面板的完整视觉规范(.team-testcase-panel 作用域样式)
+import '../Teams.css';
 
 export default function AdminTestcases() {
   useDocumentTitle(t('admin.addTestcases'));
@@ -24,13 +27,38 @@ export default function AdminTestcases() {
 
   const [testcaseSearchResults, setTestcaseSearchResults] = useState<any[]>([]);
   const [expandedTestcases, setExpandedTestcases] = useState<Set<number>>(new Set());
+  const [selectedTestcases, setSelectedTestcases] = useState<Set<number>>(new Set());
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editingDraft, setEditingDraft] = useState<any>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [importPreview, setImportPreview] = useState<{ fileName: string; parsed: any[] } | null>(null);
   const [selectedProblemJudgeType, setSelectedProblemJudgeType] = useState<string>('default');
   const testcaseSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 容量限制(与团队面板默认一致:单题总量 5MB)
+  const maxTotalTestcaseSize = 5 * 1024 * 1024;
+  const existingTotalSize = existingTestcases.reduce(
+    (sum: number, tc: any) => sum + new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length,
+    0
+  );
+  const newRowsTotalSize = testcases.reduce(
+    (sum: number, tc: any) => sum + new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length,
+    0
+  );
+  const predictedTotalSize = existingTotalSize + newRowsTotalSize;
+  const overTotalLimit = predictedTotalSize > maxTotalTestcaseSize;
+  const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)}MB` : `${(bytes / 1024).toFixed(1)}KB`;
 
   const handleSelectTestcaseProblem = useCallback(async (problem: any) => {
     setSelectedTestcaseProblem(problem);
     setSelectedProblemJudgeType(problem.judge_type || 'default');
     setTestcaseSearch('');
+    setExpandedTestcases(new Set());
+    setSelectedTestcases(new Set());
+    setEditingIdx(null);
+    setImportPreview(null);
     try {
       const data = await api.getProblemTestcases(problem.id);
       setExistingTestcases(data.testcases);
@@ -60,9 +88,35 @@ export default function AdminTestcases() {
     setTestcases([...testcases, { input: '', expected_output: '', is_sample: false, score: 10 }]);
   };
 
-  const handleBatchUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const removeTestcaseRow = (index: number) => {
+    if (testcases.length <= 1) return; // 至少保留一行
+    setTestcases(testcases.filter((_, i) => i !== index));
+  };
+
+  const duplicateTestcaseRow = (index: number) => {
+    const row = testcases[index];
+    setTestcases([...testcases, { ...row }]);
+  };
+
+  // ── 导入预览确认 ──
+  const showImportPreview = (fileName: string, parsed: any[]) => {
+    if (parsed.length === 0) {
+      addToast('error', t('admin.atLeastOneTestcase'));
+      return;
+    }
+    setImportPreview({ fileName, parsed });
+  };
+
+  const confirmImportPreview = () => {
+    if (!importPreview) return;
+    setTestcases(importPreview.parsed);
+    setImportPreview(null);
+    addToast('success', t('admin.testcaseAdded'));
+  };
+
+  const cancelImportPreview = () => setImportPreview(null);
+
+  const importJsonFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
@@ -74,29 +128,21 @@ export default function AdminTestcases() {
           is_sample: item.is_sample || false,
           score: item.score || 10,
         }));
-        if (parsed.length === 0) {
-          addToast('error', '文件中没有有效的测试数据');
-          return;
-        }
-        setTestcases(parsed);
-        addToast('success', `已导入 ${parsed.length} 个测试用例`);
+        showImportPreview(file.name, parsed);
       } catch {
-        addToast('error', 'JSON 格式错误');
+        addToast('error', t('teams.testcasesHint'));
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
   };
 
-  const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const importZipFile = async (file: File) => {
     try {
       const zip = await JSZip.loadAsync(await file.arrayBuffer());
       const inEntries = Object.entries(zip.files).filter(
         ([name, entry]) => !entry.dir && /\.in$/i.test(name)
       );
-      const parsed: { input: string; expected_output: string; is_sample: boolean; score: number }[] = [];
+      const parsed: any[] = [];
       for (const [name, entry] of inEntries) {
         const outName = name.replace(/\.in$/i, '.out');
         const outEntry = zip.files[outName];
@@ -105,16 +151,37 @@ export default function AdminTestcases() {
         const output = await outEntry.async('string');
         parsed.push({ input, expected_output: output, is_sample: false, score: 10 });
       }
-      if (parsed.length === 0) {
-        addToast('error', 'ZIP 中未找到有效的 .in/.out 测试数据');
-        return;
-      }
-      setTestcases(parsed);
-      addToast('success', `已从 ZIP 导入 ${parsed.length} 个测试用例`);
+      showImportPreview(file.name, parsed);
     } catch {
-      addToast('error', 'ZIP 解压失败');
-    } finally {
-      e.target.value = '';
+      addToast('error', t('teams.testcasesHint'));
+    }
+  };
+
+  const handleBatchUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    importJsonFile(file);
+    e.target.value = '';
+  };
+
+  const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await importZipFile(file);
+    e.target.value = '';
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (/\.(json)$/i.test(file.name)) {
+      importJsonFile(file);
+    } else if (/\.(zip)$/i.test(file.name)) {
+      importZipFile(file);
+    } else {
+      addToast('error', t('teams.testcasesHint'));
     }
   };
 
@@ -133,6 +200,10 @@ export default function AdminTestcases() {
     if (validTestcases.length === 0) {
       addToast('error', t('admin.atLeastOneTestcase'));
       return;
+    }
+    // 校验:新增测试点全为隐藏(无样例)时给出提示(不阻断保存)
+    if (!validTestcases.some((tc) => tc.is_sample) && !existingTestcases.some((tc: any) => tc.is_sample)) {
+      addToast('info', t('teams.noSampleWarning'));
     }
     setSaving(true);
     try {
@@ -161,9 +232,178 @@ export default function AdminTestcases() {
     }
   };
 
+  // ── 多选 + 批量操作 ──
+  const toggleSelectTestcase = (index: number) => {
+    setSelectedTestcases(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedTestcases(prev =>
+      prev.size === existingTestcases.length
+        ? new Set()
+        : new Set(existingTestcases.map((_, idx) => idx))
+    );
+  };
+
+  const handleBatchDeleteTestcases = async () => {
+    if (!selectedTestcaseProblem || selectedTestcases.size === 0) return;
+    if (!window.confirm(t('admin.deleteTestcaseConfirm'))) return;
+    setSaving(true);
+    try {
+      // 从大到小删除,避免索引偏移
+      const idxs = [...selectedTestcases].sort((a, b) => b - a);
+      for (const idx of idxs) {
+        await api.deleteTestcase(selectedTestcaseProblem.id, idx);
+      }
+      setSelectedTestcases(new Set());
+      setExpandedTestcases(new Set());
+      addToast('success', t('admin.testcaseDeleted'));
+      const data = await api.getProblemTestcases(selectedTestcaseProblem.id);
+      setExistingTestcases(data.testcases);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBatchSetSample = async (sample: boolean) => {
+    if (!selectedTestcaseProblem || selectedTestcases.size === 0 || saving) return;
+    setSaving(true);
+    try {
+      const next = existingTestcases.map((tc: any, idx: number) =>
+        selectedTestcases.has(idx) ? { ...tc, is_sample: sample } : tc
+      );
+      await api.updateProblemTestcases(selectedTestcaseProblem.id, next);
+      setSelectedTestcases(new Set());
+      setExpandedTestcases(new Set());
+      addToast('success', t('admin.testcaseAdded'));
+      const data = await api.getProblemTestcases(selectedTestcaseProblem.id);
+      setExistingTestcases(data.testcases);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── 排序(上移/下移 + 拖拽) ──
+  const moveTestcase = async (index: number, dir: -1 | 1) => {
+    if (!selectedTestcaseProblem) return;
+    const target = index + dir;
+    if (target < 0 || target >= existingTestcases.length || saving) return;
+    setSaving(true);
+    try {
+      const next = [...existingTestcases];
+      [next[index], next[target]] = [next[target], next[index]];
+      await api.updateProblemTestcases(selectedTestcaseProblem.id, next);
+      setExpandedTestcases(new Set());
+      setSelectedTestcases(new Set());
+      addToast('success', t('admin.testcaseAdded'));
+      const data = await api.getProblemTestcases(selectedTestcaseProblem.id);
+      setExistingTestcases(data.testcases);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    if (saving) return;
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(index)); } catch { /* ignore */ }
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex === null) return;
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  };
+
+  const handleDragDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    const from = dragIndex;
+    setDragIndex(null);
+    setDragOverIndex(null);
+    if (from === null || from === index || saving || !selectedTestcaseProblem) return;
+    setSaving(true);
+    try {
+      const next = [...existingTestcases];
+      const [moved] = next.splice(from, 1);
+      next.splice(index, 0, moved);
+      setExpandedTestcases(new Set());
+      setSelectedTestcases(new Set());
+      api.updateProblemTestcases(selectedTestcaseProblem.id, next)
+        .then(() => {
+          addToast('success', t('admin.testcaseAdded'));
+          return api.getProblemTestcases(selectedTestcaseProblem.id);
+        })
+        .then((data) => setExistingTestcases(data.testcases))
+        .catch((err: any) => addToast('error', err.message || t('common.error')))
+        .finally(() => setSaving(false));
+    } catch (err: any) {
+      addToast('error', err.message || t('common.error'));
+      setSaving(false);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+
+  // ── 就地编辑 ──
+  const startEditTestcase = (index: number) => {
+    if (saving) return;
+    setEditingIdx(index);
+    setEditingDraft({ ...existingTestcases[index] });
+  };
+
+  const cancelEditTestcase = () => {
+    setEditingIdx(null);
+    setEditingDraft(null);
+  };
+
+  const saveEditTestcase = async () => {
+    if (!selectedTestcaseProblem || editingIdx === null || !editingDraft) return;
+    const draft = editingDraft;
+    if (!draft.input || !draft.expected_output) {
+      addToast('error', t('admin.atLeastOneTestcase'));
+      return;
+    }
+    setSaving(true);
+    try {
+      const next = [...existingTestcases];
+      next[editingIdx] = {
+        input: draft.input,
+        expected_output: draft.expected_output,
+        is_sample: !!draft.is_sample,
+        score: parseInt(draft.score) || 10,
+      };
+      await api.updateProblemTestcases(selectedTestcaseProblem.id, next);
+      setEditingIdx(null);
+      setEditingDraft(null);
+      addToast('success', t('admin.testcaseAdded'));
+      const data = await api.getProblemTestcases(selectedTestcaseProblem.id);
+      setExistingTestcases(data.testcases);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleBatchExport = () => {
     if (!existingTestcases || existingTestcases.length === 0) {
-      addToast('error', '没有可导出的测试用例');
+      addToast('error', t('admin.noTestcaseData'));
       return;
     }
     const exportData = existingTestcases.map((tc: any) => ({
@@ -179,7 +419,7 @@ export default function AdminTestcases() {
     a.download = `${selectedTestcaseProblem?.slug || 'testcases'}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    addToast('success', `已导出 ${exportData.length} 个测试用例`);
+    addToast('success', t('admin.exportComplete'));
   };
 
   const toggleTestcaseExpand = (index: number) => {
@@ -213,7 +453,7 @@ export default function AdminTestcases() {
   }, []);
 
   return (
-    <div className="admin-form">
+    <div className="admin-form team-testcase-panel">
       <div className="form-group">
         <label>{t('admin.selectProblem')}</label>
         <div className="testcase-problem-select">
@@ -264,45 +504,146 @@ export default function AdminTestcases() {
 
       {selectedTestcaseProblem && (
         <>
-          <div className="testcase-existing">
-            <h3>{t('admin.existingTestcases')}</h3>
+          <div className="testcase-existing" style={{ marginTop: 12 }}>
+            <h3><FileArchive size={16} style={{ color: 'var(--primary)' }} /> {t('admin.existingTestcases')} ({existingTestcases.length})</h3>
             {existingTestcases.length === 0 ? (
-              <p className="testcase-empty">{t('admin.noTestcaseData')}</p>
+              <p className="testcase-empty">
+                <Inbox size={36} />
+                {t('admin.noTestcaseData')}
+                <small>{t('teams.testcaseEmptyHint')}</small>
+              </p>
             ) : (
               <>
                 <div className="testcase-stats">
-                  <span>{t('admin.totalTestcases').replace('{0}', String(existingTestcases.length))}</span>
-                  <span>{t('admin.sampleCount').replace('{0}', String(existingTestcases.filter((tc: any) => tc.is_sample).length))}</span>
-                  <span>{t('admin.hiddenCount').replace('{0}', String(existingTestcases.filter((tc: any) => !tc.is_sample).length))}</span>
-                  <span>{t('admin.totalScore').replace('{0}', String(existingTestcases.reduce((sum: number, tc: any) => sum + (tc.score || 0), 0)))}</span>
-                  <button className="btn btn-secondary btn-sm" onClick={handleBatchExport} style={{ marginLeft: 'auto' }}>
-                    <Download size={14} /> 批量导出
+                  <span><FileCheck size={13} /> {t('admin.sampleCount').replace('{0}', String(existingTestcases.filter((tc: any) => tc.is_sample).length))}</span>
+                  <span><FileText size={13} /> {t('admin.hiddenCount').replace('{0}', String(existingTestcases.filter((tc: any) => !tc.is_sample).length))}</span>
+                  <span><Gauge size={13} /> {t('admin.totalScore').replace('{0}', String(existingTestcases.reduce((sum: number, tc: any) => sum + (tc.score || 0), 0)))}</span>
+                  <span style={{ color: existingTotalSize > maxTotalTestcaseSize ? 'var(--error)' : undefined }}>
+                    {t('teams.totalTestcaseSize').replace('{0}', formatBytes(existingTotalSize)).replace('{1}', formatBytes(maxTotalTestcaseSize))}
+                  </span>
+                  <button className="btn btn-secondary btn-sm" onClick={toggleSelectAll}>
+                    <CheckSquare size={13} /> {selectedTestcases.size === existingTestcases.length ? t('admin.clearSelection') : t('admin.selectAll')}
                   </button>
+                  <button className="btn btn-secondary btn-sm" onClick={handleBatchExport}>
+                    <Download size={14} /> {t('admin.exportProblems')}
+                  </button>
+                  {selectedTestcases.size > 0 && (
+                    <>
+                      <button className="btn btn-secondary btn-sm" onClick={() => handleBatchSetSample(true)} disabled={saving}>
+                        <FileCheck size={13} /> {t('admin.setSample')}
+                      </button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => handleBatchSetSample(false)} disabled={saving}>
+                        <FileText size={13} /> {t('admin.setHidden')}
+                      </button>
+                      <button className="btn btn-danger btn-sm" onClick={handleBatchDeleteTestcases} disabled={saving}>
+                        <Trash2 size={13} /> {t('admin.deleteSelected').replace('{0}', String(selectedTestcases.size))}
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="testcase-capacity">
+                  <div className="testcase-capacity-track">
+                    <div
+                      className={`testcase-capacity-fill ${existingTotalSize > maxTotalTestcaseSize ? 'over' : ''}`}
+                      style={{ width: `${Math.min(100, (existingTotalSize / Math.max(1, maxTotalTestcaseSize)) * 100)}%` }}
+                    />
+                  </div>
+                  <span className={`testcase-capacity-label ${existingTotalSize > maxTotalTestcaseSize ? 'over' : ''}`}>
+                    {existingTotalSize > maxTotalTestcaseSize
+                      ? t('teams.totalTestcaseOver')
+                      : Math.round((existingTotalSize / Math.max(1, maxTotalTestcaseSize)) * 100) + '%'}
+                  </span>
                 </div>
                 <div className="testcase-list">
                   {existingTestcases.map((tc: any, idx: number) => (
-                    <div key={idx} className="testcase-item">
-                      <div
-                        className="testcase-summary-row"
-                        onClick={() => toggleTestcaseExpand(idx)}
-                        title={expandedTestcases.has(idx) ? t('admin.clickToCollapse') : t('admin.clickToExpand')}
-                      >
+                    <div
+                      key={idx}
+                      className={`testcase-item${selectedTestcases.has(idx) ? ' selected' : ''}${dragIndex === idx ? ' dragging' : ''}${dragOverIndex === idx ? ' drag-over' : ''}`}
+                      draggable={!saving}
+                      onDragStart={(e) => handleDragStart(e, idx)}
+                      onDragOver={(e) => handleDragOver(e, idx)}
+                      onDrop={(e) => handleDragDrop(e, idx)}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <div className="testcase-summary-row" onClick={() => toggleTestcaseExpand(idx)}>
+                        <input
+                          type="checkbox"
+                          className="testcase-select"
+                          checked={selectedTestcases.has(idx)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => toggleSelectTestcase(idx)}
+                        />
                         <span className="testcase-index">#{idx + 1}</span>
                         <span className={`testcase-type-badge ${tc.is_sample ? 'sample' : 'hidden'}`}>
                           {tc.is_sample ? t('admin.sample') : t('admin.hidden')}
                         </span>
                         <span className="testcase-score">{t('admin.score')}: {tc.score}</span>
+                        <span className="testcase-move">
+                          <button
+                            type="button"
+                            className="btn-icon-sm"
+                            disabled={idx === 0 || saving}
+                            onClick={(e) => { e.stopPropagation(); moveTestcase(idx, -1); }}
+                            title={t('teams.moveUp')}
+                          >
+                            <ChevronUp size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-icon-sm"
+                            disabled={idx === existingTestcases.length - 1 || saving}
+                            onClick={(e) => { e.stopPropagation(); moveTestcase(idx, 1); }}
+                            title={t('teams.moveDown')}
+                          >
+                            <ChevronDown size={13} />
+                          </button>
+                        </span>
                         <span className="testcase-expand-icon">
                           {expandedTestcases.has(idx) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </span>
                         <button
-                          className="btn btn-danger btn-sm"
-                          onClick={(e) => { e.stopPropagation(); handleDeleteTestcase(idx); }}
+                          type="button"
+                          className="btn-icon-sm"
+                          disabled={saving}
+                          onClick={(e) => { e.stopPropagation(); startEditTestcase(idx); }}
+                          title={t('common.edit')}
                         >
+                          <Pencil size={13} />
+                        </button>
+                        <button className="btn btn-danger btn-sm" onClick={(e) => { e.stopPropagation(); handleDeleteTestcase(idx); }}>
                           <Trash2 size={12} />
                         </button>
                       </div>
-                      {expandedTestcases.has(idx) && (
+                      {editingIdx === idx ? (
+                        <div className="testcase-edit-form">
+                          <div className="form-group">
+                            <label>{t('admin.input')}</label>
+                            <textarea rows={3} value={editingDraft?.input || ''} onChange={(e) => setEditingDraft({ ...editingDraft, input: e.target.value })} />
+                          </div>
+                          <div className="form-group">
+                            <label>{t('admin.expectedOutput')}</label>
+                            <textarea rows={3} value={editingDraft?.expected_output || ''} onChange={(e) => setEditingDraft({ ...editingDraft, expected_output: e.target.value })} />
+                          </div>
+                          <div className="form-group small">
+                            <label className="checkbox-label">
+                              <input type="checkbox" checked={!!editingDraft?.is_sample} onChange={(e) => setEditingDraft({ ...editingDraft, is_sample: e.target.checked })} />
+                              {t('admin.sample')}
+                            </label>
+                          </div>
+                          <div className="form-group small">
+                            <label>{t('admin.score')}</label>
+                            <input type="number" value={editingDraft?.score ?? 10} onChange={(e) => setEditingDraft({ ...editingDraft, score: parseInt(e.target.value) })} />
+                          </div>
+                          <div className="form-actions">
+                            <button type="button" className="btn btn-primary btn-sm" onClick={saveEditTestcase} disabled={saving}>
+                              <Save size={14} /> {saving ? t('admin.saving') : t('common.save')}
+                            </button>
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={cancelEditTestcase}>
+                              <X size={14} /> {t('common.cancel')}
+                            </button>
+                          </div>
+                        </div>
+                      ) : expandedTestcases.has(idx) && (
                         <div className="testcase-detail">
                           <div className="testcase-item-body">
                             <div className="testcase-io">
@@ -323,76 +664,113 @@ export default function AdminTestcases() {
             )}
           </div>
 
-          <div className="testcase-new">
-            <h3>{t('admin.addNewTestcases')}</h3>
-            {testcases.map((tc, idx) => (
-              <div key={idx} className="testcase-form-row">
-                <div className="form-group">
-                  <label>{t('admin.input')}</label>
-                  <textarea
-                    rows={3}
-                    value={tc.input}
-                    onChange={(e) => {
+          <div className="testcase-new" style={{ marginTop: 16 }}>
+            <h3><Upload size={16} style={{ color: 'var(--primary)' }} /> {t('admin.addNewTestcases')}</h3>
+            <div
+              className={`testcase-dropzone${dragActive ? ' active' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handleDrop}
+            >
+              <Upload size={22} />
+              <span>{t('teams.testcaseDropHint')}</span>
+            </div>
+            {importPreview && (
+              <div className="testcase-import-preview">
+                <div className="testcase-import-preview-head">
+                  <FileCheck size={15} />
+                  <strong>{importPreview.fileName}</strong>
+                  <span>{t('teams.importPreview').replace('{0}', String(importPreview.parsed.length))}</span>
+                </div>
+                <div className="testcase-import-preview-stats">
+                  <span>{t('admin.sampleCount').replace('{0}', String(importPreview.parsed.filter((tc: any) => tc.is_sample).length))}</span>
+                  <span>{t('admin.hiddenCount').replace('{0}', String(importPreview.parsed.filter((tc: any) => !tc.is_sample).length))}</span>
+                  <span>{t('teams.totalTestcaseSize').replace('{0}', formatBytes(
+                    importPreview.parsed.reduce((sum: number, tc: any) => sum + new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length, 0)
+                  )).replace('{1}', formatBytes(maxTotalTestcaseSize))}</span>
+                </div>
+                <div className="testcase-import-preview-actions">
+                  <button type="button" className="btn btn-primary btn-sm" onClick={confirmImportPreview}>
+                    <CheckSquare size={14} /> {t('common.confirm')}
+                  </button>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={cancelImportPreview}>
+                    <X size={14} /> {t('common.cancel')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {testcases.map((tc, idx) => {
+              const rowSize = new TextEncoder().encode(String(tc.input || '')).length + new TextEncoder().encode(String(tc.expected_output || '')).length;
+              return (
+                <div key={idx} className="testcase-form-row">
+                  <div className="testcase-form-row-head">
+                    <span className="testcase-form-index">#{idx + 1}</span>
+                    <span className="testcase-form-size">{formatBytes(rowSize)}</span>
+                    <span className="testcase-form-row-actions">
+                      <button type="button" className="btn-icon-sm" onClick={() => duplicateTestcaseRow(idx)} title={t('teams.duplicateTestcase')}>
+                        <Copy size={13} />
+                      </button>
+                      <button type="button" className="btn-icon-sm danger" onClick={() => removeTestcaseRow(idx)} title={t('common.delete')}>
+                        <Trash2 size={13} />
+                      </button>
+                    </span>
+                  </div>
+                  <div className="form-group">
+                    <label>{t('admin.input')}</label>
+                    <textarea rows={3} value={tc.input} onChange={(e) => {
                       const updated = [...testcases];
                       updated[idx] = { ...updated[idx], input: e.target.value };
                       setTestcases(updated);
-                    }}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>{t('admin.expectedOutput')}</label>
-                  <textarea
-                    rows={3}
-                    value={tc.expected_output}
-                    onChange={(e) => {
+                    }} />
+                  </div>
+                  <div className="form-group">
+                    <label>{t('admin.expectedOutput')}</label>
+                    <textarea rows={3} value={tc.expected_output} onChange={(e) => {
                       const updated = [...testcases];
                       updated[idx] = { ...updated[idx], expected_output: e.target.value };
                       setTestcases(updated);
-                    }}
-                    placeholder={selectedProblemJudgeType === 'spj' ? t('admin.spjOptional') : undefined}
-                  />
-                </div>
-                <div className="form-group small">
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={tc.is_sample}
-                      onChange={(e) => {
+                    }} placeholder={selectedProblemJudgeType === 'spj' ? t('admin.spjOptional') : undefined} />
+                  </div>
+                  <div className="form-group small">
+                    <label className="checkbox-label">
+                      <input type="checkbox" checked={tc.is_sample} onChange={(e) => {
                         const updated = [...testcases];
                         updated[idx] = { ...updated[idx], is_sample: e.target.checked };
                         setTestcases(updated);
-                      }}
-                    />
-                    {t('admin.sample')}
-                  </label>
-                </div>
-                <div className="form-group small">
-                  <label>{t('admin.score')}</label>
-                  <input
-                    type="number"
-                    value={tc.score}
-                    onChange={(e) => {
+                      }} />
+                      {t('admin.sample')}
+                    </label>
+                  </div>
+                  <div className="form-group small">
+                    <label>{t('admin.score')}</label>
+                    <input type="number" value={tc.score} onChange={(e) => {
                       const updated = [...testcases];
                       updated[idx] = { ...updated[idx], score: parseInt(e.target.value) };
                       setTestcases(updated);
-                    }}
-                  />
+                    }} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            {overTotalLimit && (
+              <span className="testcase-over-warning">
+                <AlertCircle size={14} />
+                {t('teams.predictedTotal').replace('{0}', formatBytes(predictedTotalSize)).replace('{1}', formatBytes(maxTotalTestcaseSize))}
+              </span>
+            )}
             <div className="form-actions">
               <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
-                <Upload size={14} /> 批量导入
+                <Upload size={14} /> {t('admin.addTestcases')}
                 <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleBatchUpload} />
               </label>
               <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
-                <FileArchive size={14} /> 导入 ZIP
+                <FileArchive size={14} /> {t('admin.importProblems')}
                 <input type="file" accept=".zip" style={{ display: 'none' }} onChange={handleZipImport} />
               </label>
               <button className="btn btn-secondary" onClick={handleAddTestcaseRow}>
                 <Plus size={14} /> {t('admin.addTestcase')}
               </button>
-              <button className="btn btn-primary" onClick={handleSaveTestcases} disabled={saving}>
+              <button className="btn btn-primary" onClick={handleSaveTestcases} disabled={saving || overTotalLimit} title={overTotalLimit ? t('teams.totalTestcaseOver') : undefined}>
                 <Save size={16} />
                 {saving ? t('admin.saving') : t('admin.saveTestcases')}
               </button>

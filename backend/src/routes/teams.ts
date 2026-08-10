@@ -2109,6 +2109,79 @@ teams.post('/:id/problems/:problemId/testcases', authMiddleware, async (c) => {
   return c.json({ success: true, data: { message: 'Testcases added', count: validTestcases.length } }, 201);
 });
 
+// PUT /teams/:id/problems/:problemId/testcases — 全量替换测试数据(用于排序/整体编辑)
+teams.put('/:id/problems/:problemId/testcases', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const problemId = parseInt(c.req.param('problemId') || '0');
+  const body = await c.req.json();
+
+  const existing: any = await c.env.DB.prepare(
+    `SELECT p.slug, p.judge_type FROM team_problems tp JOIN problems p ON tp.problem_id = p.id
+     WHERE tp.team_id = ? AND tp.problem_id = ?`
+  ).bind(id, problemId).first();
+  if (!existing) {
+    return c.json({ success: false, error: { message: 'Problem not found in this team', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!await canManageTeamProblem(c.env.DB, id, problemId, user.userId, user)) {
+    return c.json({ success: false, error: { message: 'Forbidden: requires problem management permission', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const config = await getTeamLimitConfig(c.env.DB);
+  const isSpj = existing.judge_type === 'spj';
+  const newTestcases = Array.isArray(body) ? body : [body];
+
+  const validTestcases = newTestcases.filter((tc: any) =>
+    tc.input && (isSpj || tc.expected_output)
+  );
+
+  // 大小上限:单个测试点
+  const byteLen = (s: string) => new TextEncoder().encode(s).length;
+  for (const tc of validTestcases) {
+    const size = byteLen(String(tc.input || '')) + byteLen(String(tc.expected_output || ''));
+    if (size > config.max_testcase_size) {
+      return c.json({
+        success: false,
+        error: { message: `Testcase too large: max ${config.max_testcase_size} bytes`, code: 'BAD_REQUEST' },
+      }, 400);
+    }
+  }
+
+  // 数量上限
+  if (validTestcases.length > config.max_testcase_count) {
+    return c.json({
+      success: false,
+      error: { message: `Testcase count exceeds limit: max ${config.max_testcase_count}`, code: 'BAD_REQUEST' },
+    }, 400);
+  }
+
+  // 总量上限
+  const totalSize = validTestcases.reduce(
+    (sum: number, tc: any) => sum + byteLen(String(tc.input || '')) + byteLen(String(tc.expected_output || '')),
+    0
+  );
+  if (totalSize > config.max_total_testcase_size) {
+    return c.json({
+      success: false,
+      error: { message: `Total testcase size exceeds limit: max ${config.max_total_testcase_size} bytes`, code: 'BAD_REQUEST' },
+    }, 400);
+  }
+
+  const normalized = validTestcases.map((tc: any) => ({
+    input: tc.input,
+    expected_output: tc.expected_output || '',
+    is_sample: tc.is_sample || false,
+    score: tc.score || 10,
+  }));
+
+  const success = await saveTestcases(c.env, existing.slug, normalized);
+  if (!success) {
+    return c.json({ success: false, error: { message: 'Failed to save testcases', code: 'INTERNAL_ERROR' } }, 500);
+  }
+
+  return c.json({ success: true, data: { message: 'Testcases replaced', count: normalized.length } });
+});
+
 // DELETE /teams/:id/problems/:problemId/testcases/:index — 删除单个测试点
 teams.delete('/:id/problems/:problemId/testcases/:index', authMiddleware, async (c) => {
   const user = c.get('user');

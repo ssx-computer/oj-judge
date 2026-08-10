@@ -1128,6 +1128,14 @@ class ApiClient {
     });
   }
 
+  // 全量替换测试数据(用于排序/整体编辑)
+  async updateProblemTestcases(problemId: number, testcases: Testcase[]) {
+    return this.request<{ message: string; count: number }>(`/problems/${problemId}/testcases`, {
+      method: 'PUT',
+      body: JSON.stringify(testcases),
+    });
+  }
+
   async getProblemSpj(problemId: number) {
     return this.request<{ spj_code: string; spj_language: string }>(`/problems/${problemId}/spj`);
   }
@@ -2051,6 +2059,13 @@ class ApiClient {
   async deleteTeamProblemTestcase(teamId: number, problemId: number, index: number) {
     return this.request<{ message: string }>(`/teams/${teamId}/problems/${problemId}/testcases/${index}`, {
       method: 'DELETE',
+    });
+  }
+  // 全量替换测试数据(用于排序/整体编辑)
+  async updateTeamProblemTestcases(teamId: number, problemId: number, testcases: Testcase[]) {
+    return this.request<{ message: string; count: number }>(`/teams/${teamId}/problems/${problemId}/testcases`, {
+      method: 'PUT',
+      body: JSON.stringify(testcases),
     });
   }
 
