@@ -292,6 +292,18 @@ submissions.get('/:id', authMiddleware, async (c) => {
     if (hiddenIds.size > 0) hideSubmissionResult(submission as any);
   }
 
+  // 团队私有题归属:附加 team_id,便于前端渲染正确的题目链接
+  // (团队私有题 is_public=0,全局 /problems/:slug 查询不到,必须跳转 /team/:id/problem/:pid)
+  const sub = submission as any;
+  if (sub.problem_id) {
+    const teamProblem: any = await c.env.DB.prepare(
+      'SELECT team_id FROM team_problems WHERE problem_id = ? LIMIT 1'
+    ).bind(sub.problem_id).first();
+    if (teamProblem) {
+      sub.team_id = teamProblem.team_id;
+    }
+  }
+
   return c.json({ success: true, data: { submission } });
 });
 

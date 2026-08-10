@@ -1448,3 +1448,328 @@
     width: 100%;
   }
 }
+
+/* 统计条图标对齐 */
+.team-testcase-panel .testcase-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.team-testcase-panel .testcase-stats span svg {
+  opacity: 0.7;
+}
+
+/* 空状态图标 */
+.team-testcase-panel .testcase-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 0;
+}
+
+.team-testcase-panel .testcase-empty svg {
+  opacity: 0.4;
+}
+
+/* 拖拽上传区 */
+.team-testcase-panel .testcase-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  margin-bottom: 16px;
+  border: 2px dashed var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--bg-tertiary, #f8fafc);
+  color: var(--text-muted, #94a3b8);
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.team-testcase-panel .testcase-dropzone svg {
+  color: var(--text-secondary, #64748b);
+}
+
+.team-testcase-panel .testcase-dropzone:hover {
+  border-color: var(--primary, #6366f1);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.team-testcase-panel .testcase-dropzone.active {
+  border-color: var(--primary, #6366f1);
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--primary, #6366f1);
+}
+
+.team-testcase-panel .testcase-dropzone.active svg {
+  color: var(--primary, #6366f1);
+}
+
+/* 测试点列表拖拽排序 */
+.team-testcase-panel .testcase-item {
+  cursor: grab;
+}
+
+.team-testcase-panel .testcase-item:active {
+  cursor: grabbing;
+}
+
+.team-testcase-panel .testcase-item.dragging {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.team-testcase-panel .testcase-item.drag-over {
+  border-color: var(--primary, #6366f1);
+  border-top-width: 3px;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+
+/* 导入预览确认 */
+.team-testcase-panel .testcase-import-preview {
+  border: 1px solid var(--primary, #6366f1);
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.06);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.team-testcase-panel .testcase-import-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary, #0f172a);
+  margin-bottom: 8px;
+}
+
+.team-testcase-panel .testcase-import-preview-head svg {
+  color: var(--primary, #6366f1);
+  flex-shrink: 0;
+}
+
+.team-testcase-panel .testcase-import-preview-head span {
+  margin-left: auto;
+  color: var(--text-secondary, #64748b);
+  font-size: 12px;
+}
+
+.team-testcase-panel .testcase-import-preview-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.team-testcase-panel .testcase-import-preview-stats span {
+  font-size: 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: var(--text-secondary, #64748b);
+}
+
+.team-testcase-panel .testcase-import-preview-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* 新增表单行头部(序号 + 大小 + 删除) */
+.team-testcase-panel .testcase-form-row-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.team-testcase-panel .testcase-form-index {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--primary, #6366f1);
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.team-testcase-panel .testcase-form-size {
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.team-testcase-panel .testcase-form-row-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-testcase-panel .testcase-form-row-head .btn-icon-sm {
+  margin-left: 0;
+}
+
+/* 超限提示 */
+.team-testcase-panel .testcase-over-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--error, #ef4444);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+/* 多选 checkbox 与选中态 */
+.team-testcase-panel .testcase-select {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary, #6366f1);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.team-testcase-panel .testcase-item.selected {
+  border-color: var(--primary, #6366f1);
+  box-shadow: 0 0 0 1px var(--primary, #6366f1) inset;
+}
+
+.team-testcase-panel .testcase-item.selected .testcase-summary-row {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+/* 排序按钮组 */
+.team-testcase-panel .testcase-move {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.team-testcase-panel .testcase-move .btn-icon-sm {
+  padding: 2px;
+}
+
+.team-testcase-panel .testcase-move .btn-icon-sm:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 就地编辑表单 */
+.team-testcase-panel .testcase-edit-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto auto;
+  gap: 12px;
+  padding: 14px;
+  background: rgba(99, 102, 241, 0.05);
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+
+.team-testcase-panel .testcase-edit-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.team-testcase-panel .testcase-edit-form .form-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+}
+
+.team-testcase-panel .testcase-edit-form textarea {
+  width: 100%;
+  min-height: 84px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text-primary, #0f172a);
+  resize: vertical;
+}
+
+.team-testcase-panel .testcase-edit-form textarea:focus {
+  outline: none;
+  border-color: var(--primary, #6366f1);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.team-testcase-panel .testcase-edit-form .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.team-testcase-panel .testcase-edit-form input[type="number"] {
+  width: 76px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text-primary, #0f172a);
+}
+
+.team-testcase-panel .testcase-edit-form .form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .team-testcase-panel .testcase-edit-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 容量进度条 */
+.team-testcase-panel .testcase-capacity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.team-testcase-panel .testcase-capacity-track {
+  flex: 1;
+  height: 8px;
+  background: var(--border, #e5e7eb);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.team-testcase-panel .testcase-capacity-fill {
+  height: 100%;
+  background: var(--primary, #6366f1);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.team-testcase-panel .testcase-capacity-fill.over {
+  background: var(--error, #ef4444);
+}
+
+.team-testcase-panel .testcase-capacity-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+  min-width: 44px;
+  text-align: right;
+}
+
+.team-testcase-panel .testcase-capacity-label.over {
+  color: var(--error, #ef4444);
+}

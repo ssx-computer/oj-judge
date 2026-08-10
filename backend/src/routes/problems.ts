@@ -712,6 +712,41 @@ problems.post('/:id/testcases', authMiddleware, problemAdminMiddleware, async (c
   return c.json({ success: true, data: { message: 'Testcases added', count: validTestcases.length } }, 201);
 });
 
+// PUT /problems/:id/testcases — 全量替换测试数据(用于排序/整体编辑)
+problems.put('/:id/testcases', authMiddleware, problemAdminMiddleware, async (c) => {
+  const problemId = parseInt(c.req.param('id') || '0');
+  const body = await c.req.json();
+
+  const existing = await c.env.DB.prepare('SELECT id, slug, judge_type FROM problems WHERE id = ?')
+    .bind(problemId)
+    .first();
+  if (!existing) {
+    return c.json({ success: false, error: { message: 'Problem not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const slug = (existing as any).slug;
+  const isSpj = (existing as any).judge_type === 'spj';
+  const newTestcases = Array.isArray(body) ? body : [body];
+
+  const validTestcases = newTestcases.filter((tc: any) =>
+    tc.input && (isSpj || tc.expected_output)
+  );
+
+  const normalized = validTestcases.map((tc: any) => ({
+    input: tc.input,
+    expected_output: tc.expected_output || '',
+    is_sample: tc.is_sample || false,
+    score: tc.score || 10,
+  }));
+
+  const success = await saveTestcases(c.env, slug, normalized);
+  if (!success) {
+    return c.json({ success: false, error: { message: 'Failed to save testcases', code: 'INTERNAL_ERROR' } }, 500);
+  }
+
+  return c.json({ success: true, data: { message: 'Testcases replaced', count: normalized.length } });
+});
+
 // ── SPJ endpoints ──
 
 problems.get('/:id/spj', authMiddleware, problemAdminMiddleware, async (c) => {

@@ -190,7 +190,11 @@ export default function SubmissionDetail() {
         )}
         <div className="info-card">
           <label>{t('submissionDetail.problem')}</label>
-          <Link to={`/problems/${submission.problem_slug}`}>{submission.problem_title}</Link>
+          {submission.team_id ? (
+            <Link to={`/team/${submission.team_id}/problem/${submission.problem_id}`}>{submission.problem_title}</Link>
+          ) : (
+            <Link to={`/problems/${submission.problem_slug}`}>{submission.problem_title}</Link>
+          )}
         </div>
         <div className="info-card">
           <label>{t('submissionDetail.language')}</label>
