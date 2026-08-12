@@ -236,6 +236,7 @@ export default function ContestDetail() {
           scoring_type: data.scoring_type,
           is_rated: data.is_rated,
           rating_finalized: data.rating_finalized,
+          board_frozen: data.board_frozen,
         });
       }
     } catch (e: any) {

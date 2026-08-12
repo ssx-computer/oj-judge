@@ -532,3 +532,410 @@
   align-items: center;
   gap: 4px;
 }
+
+/* 成就徽章 */
+.profile-achievements-section {
+  margin-top: 24px;
+}
+
+.achievement-progress {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.achievements-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.achievement-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+.achievement-card.earned {
+  border-color: rgba(250, 204, 21, 0.35);
+  background: linear-gradient(145deg, rgba(250, 204, 21, 0.08), var(--bg-card) 70%);
+}
+
+.achievement-card.earned:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 18px rgba(250, 204, 21, 0.15);
+}
+
+.achievement-card.locked {
+  opacity: 0.55;
+  filter: grayscale(0.7);
+}
+
+.achievement-icon {
+  font-size: 30px;
+  line-height: 1;
+}
+
+.achievement-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+.achievement-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.achievement-card.locked .achievement-name {
+  color: var(--text-secondary);
+}
+
+/* ── 个人主页 UI 增强 ── */
+
+/* 资料头部:渐变背景 + 柔和阴影 */
+.profile-header {
+  background: linear-gradient(160deg, var(--bg-card), var(--bg-secondary) 65%);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.profile-avatar {
+  border: 3px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  background: var(--bg-tertiary);
+  object-fit: cover;
+}
+
+.profile-username {
+  letter-spacing: 0.3px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.profile-bio {
+  max-width: 640px;
+}
+
+/* 统计卡片:图标圆底 + 悬停上浮 */
+.stat-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--primary);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+}
+
+.stat-icon {
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* section 标题统一:图标主色 */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title svg {
+  color: var(--primary);
+}
+
+.section-title .achievement-progress {
+  margin-left: auto;
+}
+
+/* 各统计区块容器卡片化 */
+.profile-submission-stats,
+.profile-rating-section,
+.difficulty-distribution,
+.language-distribution {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.heatmap-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.heatmap-stats .stat-card.mini {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.heatmap-stats .stat-card.mini:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.heatmap-cell {
+  border-radius: 3px;
+  transition: transform 0.1s ease;
+}
+
+.heatmap-cell:hover {
+  transform: scale(1.25);
+}
+
+/* 比赛历史与已解决题目 hover 增强 */
+.contest-history-item {
+  transition: all 0.2s ease;
+}
+
+.contest-history-item:hover {
+  transform: translateX(4px);
+  border-color: var(--primary);
+}
+
+.problem-card {
+  transition: all 0.2s ease;
+}
+
+.problem-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--primary);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.12);
+}
+
+/* ── 个人主页 UI 深化 ── */
+
+/* 统计卡片:顶部渐变描边 + 图标动效 */
+.stat-card {
+  position: relative;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: linear-gradient(90deg, var(--primary), transparent);
+  opacity: 0.6;
+}
+
+.stat-card:hover .stat-icon {
+  transform: scale(1.08) rotate(-3deg);
+}
+
+.stat-icon {
+  transition: transform 0.2s ease;
+}
+
+/* 热力图统计卡(图标 + 数值) */
+.heatmap-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.heatmap-stat-card {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.heatmap-stat-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.heatmap-stat-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.heatmap-stat-icon.total {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.heatmap-stat-icon.days {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.heatmap-stat-icon.streak {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.heatmap-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.heatmap-stat-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 难度分布 / 语言分布:渐变填充条 + 圆角 + 过渡 */
+.difficulty-bar-fill,
+.language-distribution .difficulty-bar-fill {
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.difficulty-bar-track,
+.language-distribution .difficulty-bar-track {
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+}
+
+.difficulty-bar-header,
+.language-bar-header {
+  margin-bottom: 4px;
+}
+
+/* ── 资料头部横幅与整体优化 ── */
+
+/* 顶部渐变横幅(资料卡背景装饰) */
+.profile-header {
+  position: relative;
+}
+
+.profile-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background: linear-gradient(90deg, var(--primary), var(--accent) 50%, var(--primary));
+  opacity: 0.7;
+}
+
+.profile-page {
+  gap: 24px;
+}
+
+.profile-actions {
+  position: relative;
+  z-index: 1;
+}
+
+/* 关注统计:悬停提升 */
+.follow-stat {
+  padding: 6px 10px;
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+
+.follow-stat:hover {
+  background: var(--bg-tertiary);
+}
+
+/* 移动端适配:统计卡片与热力图统计卡单列/双列 */
+@media (max-width: 640px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .heatmap-stat-card {
+    min-width: 100%;
+    flex: 1 1 100%;
+  }
+}
+
+/* ── 提交统计条(渐变胶囊) ── */
+.submission-stats-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.stat-bar-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-bar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.stat-bar-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-bar-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.stat-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+}
+
+.stat-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.5s ease;
+}
+
+/* ── 已解决问题卡片:难度色侧边 + hover 提升 ── */
+.problem-card.solved {
+  position: relative;
+  overflow: hidden;
+}
+
+.problem-card.solved::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--difficulty-accent, var(--primary));
+  opacity: 0.7;
+}
+
+.problem-card.solved:hover::before {
+  opacity: 1;
+}

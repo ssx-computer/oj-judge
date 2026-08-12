@@ -371,6 +371,9 @@ export default function Profile() {
           <h2 className="section-title">
             <Award size={18} />
             成就徽章
+            <span className="achievement-progress">
+              {achievements.filter((a: any) => a.earned).length} / {achievements.length}
+            </span>
           </h2>
           <div className="achievements-grid">
             {achievements.map((ach: any) => (
@@ -447,17 +450,26 @@ export default function Profile() {
               }
               return (
                 <>
-                  <div className="stat-card mini" style={{flex:1,minWidth:120,padding:12,textAlign:'center',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)'}}>
-                    <div className="stat-value" style={{fontSize:20,fontWeight:700}}>{total}</div>
-                    <div className="stat-label" style={{fontSize:12,color:'var(--text-secondary)'}}>总提交</div>
+                  <div className="heatmap-stat-card">
+                    <div className="heatmap-stat-icon total"><Clock size={16} /></div>
+                    <div>
+                      <div className="heatmap-stat-value">{total}</div>
+                      <div className="heatmap-stat-label">总提交</div>
+                    </div>
                   </div>
-                  <div className="stat-card mini" style={{flex:1,minWidth:120,padding:12,textAlign:'center',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)'}}>
-                    <div className="stat-value" style={{fontSize:20,fontWeight:700}}>{activeDays}</div>
-                    <div className="stat-label" style={{fontSize:12,color:'var(--text-secondary)'}}>活跃天数</div>
+                  <div className="heatmap-stat-card">
+                    <div className="heatmap-stat-icon days"><Calendar size={16} /></div>
+                    <div>
+                      <div className="heatmap-stat-value">{activeDays}</div>
+                      <div className="heatmap-stat-label">活跃天数</div>
+                    </div>
                   </div>
-                  <div className="stat-card mini" style={{flex:1,minWidth:120,padding:12,textAlign:'center',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)'}}>
-                    <div className="stat-value" style={{fontSize:20,fontWeight:700}}>{longestStreak}</div>
-                    <div className="stat-label" style={{fontSize:12,color:'var(--text-secondary)'}}>最长连续</div>
+                  <div className="heatmap-stat-card">
+                    <div className="heatmap-stat-icon streak"><TrendingUp size={16} /></div>
+                    <div>
+                      <div className="heatmap-stat-value">{longestStreak}</div>
+                      <div className="heatmap-stat-label">最长连续</div>
+                    </div>
                   </div>
                 </>
               );

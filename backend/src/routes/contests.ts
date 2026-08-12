@@ -346,6 +346,15 @@ contests.get('/:id/rankings', async (c) => {
   const placeholders = userIds.map(() => '?').join(',');
   const problemPlaceholders = problemIds.map(() => '?').join(',');
 
+  // 封榜:比赛进行中且已进入冻结期(freeze_minutes 内)时,排行榜只统计冻结前的提交,
+  // 冻结后的评测结果对排行榜不可见(比赛结束后自动解禁)
+  const nowMs = Date.now();
+  const endMs = new Date((contest as any).end_time).getTime();
+  const freezeMinutes = parseInt((contest as any).freeze_minutes) || 0;
+  const freezeStartMs = endMs - freezeMinutes * 60000;
+  const boardFrozen = effectiveContestStatus(contest) === 'running' && freezeMinutes > 0 && nowMs >= freezeStartMs;
+  const rankingEndTime = boardFrozen ? new Date(freezeStartMs).toISOString() : (contest as any).end_time;
+
   // Use contest time window (or virtual start time + duration for virtual participants)
   const allSubmissions = await c.env.DB.prepare(
     `SELECT id, user_id, problem_id, status, score, time_used, created_at FROM submissions
@@ -353,7 +362,7 @@ contests.get('/:id/rankings', async (c) => {
      AND contest_id = ?
      AND status != 'pending' AND status != 'running'
      AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`
-  ).bind(...userIds, ...problemIds, id, (contest as any).start_time, (contest as any).end_time).all();
+  ).bind(...userIds, ...problemIds, id, (contest as any).start_time, rankingEndTime).all();
 
   // Group submissions by user_id and problem_id
   const bestSubs: Record<string, any> = {};
@@ -526,6 +535,7 @@ contests.get('/:id/rankings', async (c) => {
       is_rated: (contest as any).is_rated || 0,
       rating_finalized: (contest as any).rating_finalized || 0,
       result_hidden: oiRunning ? 1 : 0,
+      board_frozen: boardFrozen ? 1 : 0,
     },
   });
 });
