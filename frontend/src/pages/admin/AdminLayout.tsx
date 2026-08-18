@@ -7,7 +7,7 @@ import {
   BarChart3, Plus, FileText, ClipboardList, Users, Swords,
   Ticket, BookOpen, Megaphone, Settings, Bot, FolderOpen,
   Database, Menu, X, FileSearch, ShieldBan, GraduationCap, ShieldAlert,
-  FileCheck, Flag, PenSquare, Mail, Newspaper,
+  FileCheck, Flag, PenSquare, Mail, Newspaper, Link2,
 } from 'lucide-react';
 import '../Admin.css';
 
@@ -35,6 +35,9 @@ const sidebarLinks: SidebarLink[] = [
   { to: 'solution-review', icon: <FileCheck size={18} />, label: t('review.title'), permission: 'problem_admin' },
   { to: 'reports', icon: <Flag size={18} />, label: t('reports.title'), permission: 'problem_admin' },
   { to: 'announcement', icon: <Megaphone size={18} />, label: t('admin.announcementManagement'), permission: 'super_admin' },
+  { to: 'announcements', icon: <Megaphone size={18} />, label: t('admin.announcementsManagement'), permission: 'super_admin' },
+  { to: 'friend-links', icon: <Link2 size={18} />, label: t('admin.friendLinksManagement'), permission: 'super_admin' },
+  { to: 'custom-pages', icon: <FileText size={18} />, label: t('admin.customPagesManagement'), permission: 'super_admin' },
   { to: 'ads', icon: <Newspaper size={18} />, label: t('admin.adsManagement'), permission: 'super_admin' },
   { to: 'settings', icon: <Settings size={18} />, label: t('admin.siteSettings'), permission: 'super_admin' },
   { to: 'models', icon: <Bot size={18} />, label: t('admin.aiModels'), permission: 'super_admin' },

@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { AppType } from '../types';
 import { signJWT } from '../utils/jwt';
-import { validateUsername, validateEmail } from '../utils/validator';
+import { validateUsername, validateEmail, validatePassword } from '../utils/validator';
+import { fetchWithTimeout } from '../utils/fetch-timeout';
 import * as bcrypt from 'bcryptjs';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { captchaMiddleware } from '../middleware/captcha';
@@ -120,29 +121,36 @@ auth.get('/cpoauth/callback', async (c) => {
     tokenBody.code_verifier = savedVerifier;
   }
 
-  const tokenResponse = await fetch('https://www.cpoauth.com/api/oauth/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(tokenBody),
-  });
+  let tokenData: { access_token?: string; error?: string; error_description?: string };
+  let cpUser: { sub: string; username: string; display_name?: string; avatar_url?: string };
+  try {
+    const tokenResponse = await fetchWithTimeout('https://www.cpoauth.com/api/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tokenBody),
+    });
 
-  const tokenData = (await tokenResponse.json()) as { access_token?: string; error?: string; error_description?: string };
-  if (!tokenData.access_token) {
-    console.error('CP OAuth token error:', JSON.stringify(tokenData));
-    return c.redirect(`${c.env.FRONTEND_URL}/auth/callback?error=token_failed&detail=${encodeURIComponent(tokenData.error || 'unknown')}`);
+    tokenData = (await tokenResponse.json()) as { access_token?: string; error?: string; error_description?: string };
+    if (!tokenData.access_token) {
+      console.error('CP OAuth token error:', JSON.stringify(tokenData));
+      return c.redirect(`${c.env.FRONTEND_URL}/auth/callback?error=token_failed&detail=${encodeURIComponent(tokenData.error || 'unknown')}`);
+    }
+
+    // 用 access_token 获取用户信息
+    const userResponse = await fetchWithTimeout('https://www.cpoauth.com/api/oauth/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    cpUser = (await userResponse.json()) as {
+      sub: string;
+      username: string;
+      display_name?: string;
+      avatar_url?: string;
+    };
+  } catch (e) {
+    console.error('CP OAuth request failed (timeout/network):', e);
+    return c.redirect(`${c.env.FRONTEND_URL}/auth/callback?error=token_failed`);
   }
-
-  // 用 access_token 获取用户信息
-  const userResponse = await fetch('https://www.cpoauth.com/api/oauth/userinfo', {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
-  });
-
-  const cpUser = (await userResponse.json()) as {
-    sub: string;
-    username: string;
-    display_name?: string;
-    avatar_url?: string;
-  };
 
   if (!cpUser.sub || !cpUser.username) {
     console.error('CP OAuth userinfo error: missing sub or username', JSON.stringify(cpUser));
@@ -201,7 +209,7 @@ auth.get('/cpoauth/callback', async (c) => {
   c.header('Set-Cookie', 'cpoauth_cv=; Path=/; Max-Age=0');
   c.header('Set-Cookie', 'cpoauth_st=; Path=/; Max-Age=0', { append: true });
 
-  return c.redirect(`${c.env.FRONTEND_URL}/auth/callback?token=${token}`);
+  return c.redirect(`${c.env.FRONTEND_URL}/auth/callback#token=${token}`);
 });
 
 // GitHub OAuth (existing)
@@ -209,46 +217,82 @@ auth.get('/github', async (c) => {
   const clientId = c.env.GITHUB_CLIENT_ID;
   const callbackBase = await getOAuthCallbackBase(c);
   const redirectUri = `${callbackBase}/api/v1/auth/github/callback`;
-  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=user:email`;
+
+  // 生成 state 防止 OAuth CSRF（与 CP OAuth 一致），以 HttpOnly Cookie 存储，回调时校验
+  const stateBytes = new Uint8Array(16);
+  crypto.getRandomValues(stateBytes);
+  const state = base64url(stateBytes.buffer as ArrayBuffer);
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope: 'user:email',
+    state,
+  });
+  const githubAuthUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
+
+  const cookieOpts = 'Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600';
+  c.header('Set-Cookie', `gh_oauth_st=${state}; ${cookieOpts}`);
   return c.redirect(githubAuthUrl);
 });
 
 auth.get('/github/callback', async (c) => {
   const code = c.req.query('code');
+  const state = c.req.query('state');
   if (!code) {
     return c.json({ success: false, error: { message: 'Missing authorization code', code: 'BAD_REQUEST' } }, 400);
   }
 
-  const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({
-      client_id: c.env.GITHUB_CLIENT_ID,
-      client_secret: c.env.GITHUB_CLIENT_SECRET,
-      code,
-    }),
-  });
-
-  const tokenData = (await tokenResponse.json()) as { access_token?: string; error?: string };
-  if (!tokenData.access_token) {
-    return c.json({ success: false, error: { message: 'Failed to obtain access token', code: 'BAD_REQUEST' } }, 400);
-  }
-
-  const userResponse = await fetch('https://api.github.com/user', {
-    headers: {
-      Authorization: `Bearer ${tokenData.access_token}`,
-      'User-Agent': 'OJ-System',
-    },
-  });
-
-  const githubUser = (await userResponse.json()) as {
-    id: number;
-    login: string;
-    avatar_url: string;
+  // 校验 state 防止 OAuth 登录 CSRF：攻击者无法伪造 HttpOnly Cookie 中的随机 state
+  const cookieHeader = c.req.header('Cookie') || '';
+  const getCookie = (name: string) => {
+    const match = cookieHeader.split(';').map(s => s.trim()).find(s => s.startsWith(`${name}=`));
+    return match ? decodeURIComponent(match.split('=').slice(1).join('=')) : null;
   };
+  const savedState = getCookie('gh_oauth_st');
+  if (!savedState || state !== savedState) {
+    return c.redirect(`${c.env.FRONTEND_URL}/auth/callback?error=state_mismatch`);
+  }
+  // state 一次性使用，校验通过后立即清除
+  c.header('Set-Cookie', 'gh_oauth_st=; Path=/; Max-Age=0');
+
+  let tokenData: { access_token?: string; error?: string };
+  let githubUser: { id: number; login: string; avatar_url: string };
+  try {
+    const tokenResponse = await fetchWithTimeout('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: c.env.GITHUB_CLIENT_ID,
+        client_secret: c.env.GITHUB_CLIENT_SECRET,
+        code,
+      }),
+    });
+
+    tokenData = (await tokenResponse.json()) as { access_token?: string; error?: string };
+    if (!tokenData.access_token) {
+      return c.json({ success: false, error: { message: 'Failed to obtain access token', code: 'BAD_REQUEST' } }, 400);
+    }
+
+    const userResponse = await fetchWithTimeout('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        'User-Agent': 'OJ-System',
+      },
+    });
+
+    githubUser = (await userResponse.json()) as {
+      id: number;
+      login: string;
+      avatar_url: string;
+    };
+  } catch (e) {
+    console.error('GitHub OAuth request failed (timeout/network):', e);
+    return c.redirect(`${c.env.FRONTEND_URL}/auth/callback?error=token_failed`);
+  }
 
   let user: any = await c.env.DB.prepare('SELECT * FROM users WHERE github_id = ?')
     .bind(githubUser.id)
@@ -283,11 +327,14 @@ auth.get('/github/callback', async (c) => {
     c.env.JWT_SECRET
   );
 
-  return c.redirect(`${c.env.FRONTEND_URL}/auth/callback?token=${token}`);
+  return c.redirect(`${c.env.FRONTEND_URL}/auth/callback#token=${token}`);
 });
 
 // New: register with username/password
-auth.post('/register', captchaMiddleware('register'), createRateLimiter('register', 10, 300_000), async (c) => {
+// 注册限流:5 次 / 10 分钟(较审计前的 10 次/5 分钟更严格)。
+// 限流中间件已同时按 IP(cf-connecting-ip / x-forwarded-for)与设备指纹聚合,
+// 防止换 IP 绕过;叠加 captchaMiddleware 后足以抵御批量注册/验证码爆破。
+auth.post('/register', captchaMiddleware('register'), createRateLimiter('register', 5, 600_000), async (c) => {
   const body: any = await c.req.json();
   const username = (body.username || '').trim();
   const password = body.password;
@@ -302,20 +349,9 @@ auth.post('/register', captchaMiddleware('register'), createRateLimiter('registe
     return c.json({ success: false, error: { message: usernameError, code: 'BAD_REQUEST' } }, 400);
   }
 
-  if (password.length < 8) {
-    return c.json({ success: false, error: { message: 'Password too short (min 8 characters)', code: 'BAD_REQUEST' } }, 400);
-  }
-
-  if (!/[A-Z]/.test(password)) {
-    return c.json({ success: false, error: { message: 'Password must include at least one uppercase letter', code: 'BAD_REQUEST' } }, 400);
-  }
-
-  if (!/[a-z]/.test(password)) {
-    return c.json({ success: false, error: { message: 'Password must include at least one lowercase letter', code: 'BAD_REQUEST' } }, 400);
-  }
-
-  if (!/[0-9]/.test(password)) {
-    return c.json({ success: false, error: { message: 'Password must include at least one digit', code: 'BAD_REQUEST' } }, 400);
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return c.json({ success: false, error: { message: passwordError, code: 'BAD_REQUEST' } }, 400);
   }
 
   // Check registration open flag from settings table or env
@@ -624,8 +660,9 @@ auth.post('/reset-password', createRateLimiter('resetPassword', 5, 300_000), asy
     return c.json({ success: false, error: { message: 'Token and password are required', code: 'BAD_REQUEST' } }, 400);
   }
 
-  if (password.length < 8) {
-    return c.json({ success: false, error: { message: 'Password too short (min 8 characters)', code: 'BAD_REQUEST' } }, 400);
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return c.json({ success: false, error: { message: passwordError, code: 'BAD_REQUEST' } }, 400);
   }
 
   const record: any = await c.env.DB.prepare(
@@ -673,7 +710,7 @@ auth.get('/me', async (c) => {
 
   const token = authHeader.slice(7);
   const { verifyJWT } = await import('../utils/jwt');
-  const payload = await verifyJWT(token, c.env.JWT_SECRET);
+  const payload = await verifyJWT(token, c.env.JWT_SECRET, (c.env as any).JWT_SECRET_PREVIOUS);
   if (!payload) {
     return c.json({ success: false, error: { message: 'Invalid or expired token', code: 'UNAUTHORIZED' } }, 401);
   }

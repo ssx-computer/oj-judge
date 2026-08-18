@@ -1,0 +1,134 @@
+.share-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.share-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.share-title-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.share-title-block h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.share-icon {
+  color: var(--accent, #4f6ef7);
+}
+
+.share-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-secondary, #888);
+  margin-bottom: 16px;
+}
+
+.share-meta span,
+.share-meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.share-lang {
+  color: var(--accent, #4f6ef7);
+}
+
+.share-expired {
+  color: #f85149;
+}
+
+.share-source-link {
+  color: var(--accent, #4f6ef7);
+  text-decoration: none;
+}
+
+.share-code {
+  background: var(--bg-tertiary, #161b22);
+  border: 1px solid var(--border-color, #30363d);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary, #f0f6fc);
+  white-space: pre;
+}
+
+.share-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 60px 20px;
+  color: var(--text-secondary, #888);
+}
+
+/* ── 分享密码锁屏 ── */
+.share-lock-card {
+  max-width: 380px;
+  margin: 60px auto;
+  padding: 32px 28px;
+  text-align: center;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 14px;
+}
+
+.share-lock-icon {
+  color: var(--accent, #4f6ef7);
+  margin-bottom: 12px;
+}
+
+.share-lock-card h1 {
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+
+.share-lock-desc {
+  font-size: 13px;
+  color: var(--text-secondary, #888);
+  margin: 0 0 16px;
+}
+
+.share-lock-error {
+  font-size: 13px;
+  color: #f85149;
+  margin: 0 0 10px;
+}
+
+.share-lock-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.share-lock-form input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--bg-input, #fff);
+  color: var(--text-primary, #333);
+}
+
+.share-lock-back {
+  margin-top: 4px;
+}

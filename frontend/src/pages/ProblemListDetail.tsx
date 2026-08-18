@@ -1,19 +1,45 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { List, ChevronRight, User, StickyNote, Hash } from 'lucide-react';
+import { List, ChevronRight, User, StickyNote, Hash, Copy, Share2, CheckCircle } from 'lucide-react';
 import { t } from '../i18n';
 import { useToastStore } from '../store/toast';
+import { useAuthStore } from '../store/auth';
 import './ProblemListDetail.css';
 
 export default function ProblemListDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const addToast = useToastStore((s) => s.addToast);
+  const { user } = useAuthStore();
   const [list, setList] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+
+  // 克隆题单到自己的题单
+  const handleClone = async () => {
+    if (!id) return;
+    if (!window.confirm(t('problemListDetail.cloneConfirm'))) return;
+    try {
+      const result = await api.cloneProblemList(Number(id));
+      addToast('success', t('problemListDetail.cloneDone'));
+      navigate(`/lists/${result.id}`);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  // 复制分享链接
+  const handleShare = () => {
+    const url = window.location.href;
+    navigator.clipboard?.writeText(url).then(() => {
+      addToast('success', t('problemListDetail.shareCopied'));
+    }).catch(() => {
+      addToast('error', t('common.error'));
+    });
+  };
 
   const fetchList = useCallback(async () => {
     try {
@@ -71,6 +97,16 @@ export default function ProblemListDetail() {
             <List size={24} className="list-icon" />
             <h1 className="list-detail-title">{list.title}</h1>
           </div>
+          <div className="list-info-actions">
+            {user && (
+              <button className="btn btn-secondary btn-sm" onClick={handleClone} title={t('problemListDetail.clone')}>
+                <Copy size={14} /> {t('problemListDetail.clone')}
+              </button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={handleShare} title={t('problemListDetail.share')}>
+              <Share2 size={14} /> {t('problemListDetail.share')}
+            </button>
+          </div>
         </div>
 
         {list.description && (
@@ -87,6 +123,27 @@ export default function ProblemListDetail() {
             {list.creator || list.username || ''}
           </span>
         </div>
+
+        {/* 题单进度追踪 */}
+        {user && items.length > 0 && (
+          <div className="list-progress">
+            {(() => {
+              const solvedCount = items.filter((it: any) => it.solved === 1).length;
+              const pct = Math.round((solvedCount / items.length) * 100);
+              return (
+                <>
+                  <div className="list-progress-header">
+                    <span className="list-progress-label">{t('problemListDetail.progress')}</span>
+                    <span className="list-progress-count">{solvedCount}/{items.length} ({pct}%)</span>
+                  </div>
+                  <div className="list-progress-track">
+                    <div className="list-progress-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
       </div>
 
       <div className="list-problems-section">
@@ -106,7 +163,13 @@ export default function ProblemListDetail() {
                 to={`/problems/${item.slug || item.problem_id}`}
                 className="list-problem-row"
               >
-                <span className="col-order">{idx + 1}</span>
+                <span className="col-order">
+                  {user && item.solved === 1 ? (
+                    <CheckCircle size={15} className="list-solved-icon" aria-label={t('problemListDetail.solved')} />
+                  ) : (
+                    idx + 1
+                  )}
+                </span>
                 <span className="col-title">{item.title || item.problem_title || `Problem ${item.problem_id}`}</span>
                 <span className="col-note">
                   {item.note ? (

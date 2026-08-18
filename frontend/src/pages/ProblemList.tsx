@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
-import { Search, Tag, Clock, MemoryStick, Filter, CheckCircle, AlertCircle } from 'lucide-react';
+import { Search, Tag, Clock, MemoryStick, Filter, CheckCircle, AlertCircle, Dices } from 'lucide-react';
 import { DIFFICULTY_COLORS, DIFFICULTIES } from '../constants';
 import RatingBadge from '../components/RatingBadge';
 import { SkeletonTable } from '../components/Skeleton';
@@ -15,6 +15,7 @@ import './ProblemList.css';
 export default function ProblemList() {
   const { user } = useAuthStore();
   const addToast = useToastStore((s) => s.addToast);
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [problems, setProblems] = useState<any[]>([]);
   const [pagination, setPagination] = useState<any>({});
@@ -125,21 +126,39 @@ export default function ProblemList() {
     setPage(1);
   };
 
+  // 随机一题:按当前筛选条件(difficulty/tag)随机跳转
+  const handleRandomProblem = async () => {
+    try {
+      const { problem } = await api.getRandomProblem({
+        difficulty: selectedDifficulty || undefined,
+        tag: selectedTag || undefined,
+      });
+      navigate(`/problems/${problem.slug}`);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
   return (
     <div className="problem-list-page">
       <div className="page-header">
         <h1>{t('problemList.title')}</h1>
-        <form className="search-bar" onSubmit={handleSearch}>
-          <Search size={16} />
-          <input
-            type="text"
-            placeholder={t('problemList.searchPlaceholder')}
-            name="problem_search"
-            autoComplete="off"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </form>
+        <div className="page-header-actions">
+          <button className="btn btn-secondary btn-sm random-problem-btn" onClick={handleRandomProblem} title={t('problemList.randomProblem')}>
+            <Dices size={14} /> {t('problemList.randomProblem')}
+          </button>
+          <form className="search-bar" onSubmit={handleSearch}>
+            <Search size={16} />
+            <input
+              type="text"
+              placeholder={t('problemList.searchPlaceholder')}
+              name="problem_search"
+              autoComplete="off"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </form>
+        </div>
       </div>
 
       <div className="filters">

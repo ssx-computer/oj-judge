@@ -1,6 +1,20 @@
 import { Hono } from 'hono';
 import { AppType } from '../types';
 import { fetchSpjCode } from '../utils/github-spj';
+import { fetchWithTimeout } from '../utils/fetch-timeout';
+
+// 恒定时间字符串比较,避免 CALLBACK_SECRET 校验的时序侧信道攻击
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ba = enc.encode(a);
+  const bb = enc.encode(b);
+  if (ba.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ba.length; i++) {
+    diff |= ba[i] ^ bb[i];
+  }
+  return diff === 0;
+}
 
 const internal = new Hono<AppType>();
 
@@ -11,7 +25,7 @@ internal.post('/callback', async (c) => {
   }
 
   const token = authHeader.slice(7);
-  if (token !== c.env.CALLBACK_SECRET) {
+  if (!timingSafeEqual(token, c.env.CALLBACK_SECRET)) {
     return c.json({ success: false, error: { message: 'Invalid callback secret', code: 'FORBIDDEN' } }, 403);
   }
 
@@ -122,7 +136,7 @@ internal.get('/judge-data', async (c) => {
   }
 
   const token = authHeader.slice(7);
-  if (token !== c.env.CALLBACK_SECRET) {
+  if (!timingSafeEqual(token, c.env.CALLBACK_SECRET)) {
     return c.json({ success: false, error: { message: 'Invalid callback secret', code: 'FORBIDDEN' } }, 403);
   }
 
@@ -152,7 +166,7 @@ internal.get('/judge-data', async (c) => {
   }
 
   const filePath = `testcases/${(problem as any).slug}.json`;
-  const githubResponse = await fetch(
+  const githubResponse = await fetchWithTimeout(
     `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${filePath}`,
     {
       headers: {

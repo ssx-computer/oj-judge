@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
-import { Trophy, Calendar, Users, Filter, PlusCircle, AlertCircle, Clock, Play, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Trophy, Calendar, Users, Filter, PlusCircle, AlertCircle, Clock, Play, CheckCircle, ChevronLeft, ChevronRight, CalendarPlus } from 'lucide-react';
 import { t } from '../i18n';
 import { usePermissions } from '../hooks/usePermissions';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useNow } from '../hooks/useNow';
+import { useAuthStore } from '../store/auth';
+import { useToastStore } from '../store/toast';
 import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
 import './Contests.css';
 
@@ -27,6 +29,8 @@ const STATUS_ICON: Record<string, any> = {
 
 export default function Contests() {
   const perms = usePermissions();
+  const { user } = useAuthStore();
+  const addToast = useToastStore((s) => s.addToast);
   const [contests, setContests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -87,6 +91,16 @@ export default function Contests() {
     return formatContestTime(dateStr);
   };
 
+  // 导出已报名比赛的 ICS 日历文件
+  const handleExportIcs = async () => {
+    try {
+      await api.exportContestsIcs();
+      addToast('success', t('contests.icsExported'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
   return (
     <div className="contests-page">
       <div className="contests-header">
@@ -96,6 +110,13 @@ export default function Contests() {
             <h1 className="page-title">{t('contests.title')}</h1>
           </div>
         </div>
+
+        {user && (
+          <button className="btn btn-secondary btn-sm" onClick={handleExportIcs} title={t('contests.exportIcs')}>
+            <CalendarPlus size={14} />
+            {t('contests.exportIcs')}
+          </button>
+        )}
 
         {perms.canManageContests && (
           <Link to="/match/new" className="btn btn-primary btn-sm">

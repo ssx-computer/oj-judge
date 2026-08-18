@@ -411,3 +411,95 @@
   margin-top: 12px;
   font-size: 14px;
 }
+
+/* ── 评论增强:回复 / 点赞 ── */
+.comment-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.comment-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.comment-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent);
+}
+
+.comment-action-btn.liked {
+  color: var(--accent);
+}
+
+.reply-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.comment-parent-ref {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ── 评论/回复旁的用户头衔徽章 ── */
+.user-title-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  background: var(--accent-light, rgba(79, 110, 247, 0.12));
+  color: var(--accent, #4f6ef7);
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* ── 文章正文 + 目录 双栏布局 ── */
+.article-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.article-layout .article-content {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── 阅读进度 + 正文 列 ── */
+.article-layout-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.article-layout-main .article-content {
+  flex: 1;
+  min-width: 0;
+}

@@ -78,7 +78,27 @@ problemLists.get('/:id', async (c) => {
      WHERE pli.list_id = ? ORDER BY pli.sort_order, pli.id`
   ).bind(id).all();
 
-  return c.json({ success: true, data: { list, items: items.results } });
+  // 题单进度追踪:若当前请求带有效 token,标记每题是否已 AC
+  const itemList = items.results as any[];
+  const authHeader = c.req.header('Authorization');
+  if (authHeader && authHeader.startsWith('Bearer ') && itemList.length > 0) {
+    const { verifyJWT } = await import('../utils/jwt');
+    const payload = await verifyJWT(authHeader.slice(7), c.env.JWT_SECRET, (c.env as any).JWT_SECRET_PREVIOUS);
+    if (payload) {
+      const problemIds = itemList.map((it) => it.problem_id);
+      const placeholders = problemIds.map(() => '?').join(',');
+      const solvedRows = await c.env.DB.prepare(
+        `SELECT DISTINCT problem_id FROM submissions
+         WHERE user_id = ? AND status = 'accepted' AND problem_id IN (${placeholders})`
+      ).bind(payload.userId, ...problemIds).all();
+      const solvedIds = new Set((solvedRows.results as any[]).map((r) => r.problem_id));
+      for (const it of itemList) {
+        it.solved = solvedIds.has(it.problem_id) ? 1 : 0;
+      }
+    }
+  }
+
+  return c.json({ success: true, data: { list, items: itemList } });
 });
 
 // Create problem list
@@ -115,6 +135,45 @@ problemLists.post('/', authMiddleware, problemListCreateLimiter, async (c) => {
   }
 
   return c.json({ success: true, data: { id: listId, message: 'Problem list created' } }, 201);
+});
+
+// POST /lists/:id/clone — 克隆题单到自己的题单(可克隆公开或自己的题单)
+problemLists.post('/:id/clone', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id')!);
+
+  const source: any = await c.env.DB.prepare('SELECT * FROM problem_lists WHERE id = ?').bind(id).first();
+  if (!source) {
+    return c.json({ success: false, error: { message: 'Problem list not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 仅允许克隆公开题单或自己的题单
+  const isOwner = source.user_id === user.userId;
+  const hasListAdmin = (user.permissions || []).includes('list_admin') || user.role === 'admin' || user.role === 'super_admin' || user.userId === 1;
+  if (source.is_public !== 1 && !isOwner && !hasListAdmin) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const newTitle = `${source.title}（副本）`;
+  const result = await c.env.DB.prepare(
+    'INSERT INTO problem_lists (title, description, user_id, is_public) VALUES (?, ?, ?, ?)'
+  ).bind(newTitle, source.description || '', user.userId, 1).run();
+  const newId = result.meta.last_row_id;
+
+  // 复制题目项
+  const items = await c.env.DB.prepare(
+    'SELECT problem_id, sort_order, note FROM problem_list_items WHERE list_id = ? ORDER BY sort_order'
+  ).bind(id).all();
+  if (items.results.length > 0) {
+    const stmts = (items.results as any[]).map((it) =>
+      c.env.DB.prepare(
+        'INSERT OR IGNORE INTO problem_list_items (list_id, problem_id, sort_order, note) VALUES (?, ?, ?, ?)'
+      ).bind(newId, it.problem_id, it.sort_order, it.note || '')
+    );
+    await c.env.DB.batch(stmts);
+  }
+
+  return c.json({ success: true, data: { id: newId, title: newTitle, message: 'Problem list cloned' } }, 201);
 });
 
 // Update problem list

@@ -47,6 +47,7 @@ export default function AdminSettings() {
   const [settingsCaptchaBlog, setSettingsCaptchaBlog] = useState(false);
   const [settingsCaptchaDiscussion, setSettingsCaptchaDiscussion] = useState(false);
   const [settingsCaptchaSolution, setSettingsCaptchaSolution] = useState(false);
+  const [settingsThemeAccent, setSettingsThemeAccent] = useState('');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
@@ -91,6 +92,7 @@ export default function AdminSettings() {
       setSettingsCaptchaBlog(data.captcha_blog === 'true');
       setSettingsCaptchaDiscussion(data.captcha_discussion === 'true');
       setSettingsCaptchaSolution(data.captcha_solution === 'true');
+      setSettingsThemeAccent(data.theme_accent || '');
       setSettingsLoaded(true);
     } catch (e) {
       console.error('Failed to fetch site settings:', e);
@@ -143,6 +145,7 @@ export default function AdminSettings() {
         captcha_blog: String(settingsCaptchaBlog),
         captcha_discussion: String(settingsCaptchaDiscussion),
         captcha_solution: String(settingsCaptchaSolution),
+        theme_accent: settingsThemeAccent.trim(),
       });
       await fetchSettings(true);
       addToast('success', t('admin.settingsSaved'));
@@ -258,6 +261,28 @@ export default function AdminSettings() {
         </label>
         <p style={{fontSize:'13px',color:'var(--text-secondary)',marginTop:'4px'}}>
           {t('common.uploadEnabledHint')}
+        </p>
+      </div>
+
+      <div className="form-group">
+        <label>{t('admin.themeAccent')}</label>
+        <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+          <input
+            type="color"
+            value={/^#[0-9a-fA-F]{6}$/.test(settingsThemeAccent) ? settingsThemeAccent : '#58a6ff'}
+            onChange={(e) => setSettingsThemeAccent(e.target.value)}
+            style={{width:44,height:32,padding:0,border:'1px solid var(--border-color)',borderRadius:6,background:'transparent',cursor:'pointer'}}
+          />
+          <input
+            type="text"
+            value={settingsThemeAccent}
+            onChange={(e) => setSettingsThemeAccent(e.target.value)}
+            placeholder="#58a6ff"
+            style={{flex:1}}
+          />
+        </div>
+        <p style={{fontSize:'13px',color:'var(--text-secondary)',marginTop:'4px'}}>
+          {t('admin.themeAccentHint')}
         </p>
       </div>
       </div>

@@ -178,3 +178,47 @@
     display: none;
   }
 }
+
+/* ── 题单进度追踪 ── */
+.list-progress {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border-color, #e0e0e0);
+}
+
+.list-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.list-progress-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #333);
+}
+
+.list-progress-count {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+
+.list-progress-track {
+  height: 8px;
+  background: var(--bg-tertiary, #f3f4f6);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.list-progress-fill {
+  height: 100%;
+  background: var(--accent, #4f6ef7);
+  border-radius: 6px;
+  transition: width 0.4s ease;
+}
+
+.list-solved-icon {
+  color: #3fb950;
+  vertical-align: -3px;
+}

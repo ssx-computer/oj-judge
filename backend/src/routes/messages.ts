@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { AppType } from '../types';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { sendNotification, NotificationType } from '../utils/notify';
+import { createRateLimiter } from '../middleware/rateLimit';
 
 const messages = new Hono<AppType>();
 
@@ -124,6 +125,89 @@ messages.post('/conversations', authMiddleware, async (c) => {
   );
 
   return c.json({ success: true, data: { conversation_id: conversationId, message: 'Message sent' } }, 201);
+});
+
+// POST /messages/admin/send — 管理员定向/群发站内信(admin)
+messages.post('/admin/send', authMiddleware, adminMiddleware, createRateLimiter('admin_msg', 20, 60_000), async (c) => {
+  const admin = c.get('user');
+  const body = await c.req.json();
+  const { target_user_id, content } = body;
+
+  if (!content || !content.trim()) {
+    return c.json({ success: false, error: { message: 'content is required', code: 'BAD_REQUEST' } }, 400);
+  }
+  const trimmed = content.trim().substring(0, 2000);
+
+  // 定向:发给指定用户
+  if (target_user_id) {
+    const targetId = parseInt(target_user_id);
+    if (targetId === admin.userId) {
+      return c.json({ success: false, error: { message: 'Cannot send message to yourself', code: 'BAD_REQUEST' } }, 400);
+    }
+    const target = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(targetId).first();
+    if (!target) {
+      return c.json({ success: false, error: { message: 'Target user not found', code: 'NOT_FOUND' } }, 404);
+    }
+
+    // 查找或创建 管理员↔用户 会话
+    let conversationId: number;
+    const existing = await c.env.DB.prepare(
+      `SELECT cp1.conversation_id as id
+       FROM conversation_participants cp1
+       JOIN conversation_participants cp2 ON cp1.conversation_id = cp2.conversation_id
+       WHERE cp1.user_id = ? AND cp2.user_id = ?`
+    ).bind(admin.userId, targetId).first();
+
+    if (existing) {
+      conversationId = (existing as any).id;
+    } else {
+      const result = await c.env.DB.prepare('INSERT INTO conversations DEFAULT VALUES').run();
+      conversationId = result.meta.last_row_id as number;
+      await c.env.DB.prepare(
+        'INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?), (?, ?)'
+      ).bind(conversationId, admin.userId, conversationId, targetId).run();
+    }
+
+    await c.env.DB.prepare(
+      'INSERT INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)'
+    ).bind(conversationId, admin.userId, trimmed).run();
+    await c.env.DB.prepare('UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(conversationId).run();
+    await sendNotification(c.env.DB, targetId, NotificationType.MESSAGE, `来自管理员的私信`, trimmed.slice(0, 50), `/messages/${conversationId}`);
+
+    return c.json({ success: true, data: { sent: 1, conversation_id: conversationId, message: 'Message sent' } }, 201);
+  }
+
+  // 群发:发给所有用户(逐用户创建/复用会话,管理员限量)
+  const users = await c.env.DB.prepare('SELECT id FROM users WHERE id != ?').bind(admin.userId).all();
+  let sent = 0;
+  for (const u of (users.results as any[])) {
+    let conversationId: number;
+    const existing = await c.env.DB.prepare(
+      `SELECT cp1.conversation_id as id
+       FROM conversation_participants cp1
+       JOIN conversation_participants cp2 ON cp1.conversation_id = cp2.conversation_id
+       WHERE cp1.user_id = ? AND cp2.user_id = ?`
+    ).bind(admin.userId, u.id).first();
+
+    if (existing) {
+      conversationId = (existing as any).id;
+    } else {
+      const result = await c.env.DB.prepare('INSERT INTO conversations DEFAULT VALUES').run();
+      conversationId = result.meta.last_row_id as number;
+      await c.env.DB.prepare(
+        'INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?), (?, ?)'
+      ).bind(conversationId, admin.userId, conversationId, u.id).run();
+    }
+
+    await c.env.DB.prepare(
+      'INSERT INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)'
+    ).bind(conversationId, admin.userId, trimmed).run();
+    await c.env.DB.prepare('UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(conversationId).run();
+    await sendNotification(c.env.DB, u.id, NotificationType.MESSAGE, `来自管理员的站内信`, trimmed.slice(0, 50), `/messages/${conversationId}`);
+    sent++;
+  }
+
+  return c.json({ success: true, data: { sent, message: `Broadcast sent to ${sent} users` } }, 201);
 });
 
 // POST /messages/conversations/:id/read — 更新 last_read_at

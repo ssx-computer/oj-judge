@@ -1,0 +1,83 @@
+.article-toc {
+  position: sticky;
+  top: 84px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  width: 220px;
+  flex-shrink: 0;
+  padding: 10px 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.article-toc-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-secondary, #888);
+  margin-bottom: 8px;
+}
+
+.article-toc-toggle {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.article-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.article-toc-item button {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #888);
+  font-size: 12.5px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s, color 0.15s;
+}
+
+.article-toc-item button:hover {
+  background: var(--bg-tertiary, #f3f4f6);
+  color: var(--accent, #4f6ef7);
+}
+
+.article-toc-item.active button {
+  color: var(--accent, #4f6ef7);
+  font-weight: 600;
+  background: var(--accent-light, rgba(79, 110, 247, 0.1));
+}
+
+.article-toc-item.level-2 button { font-weight: 500; }
+.article-toc-item.level-3 button { font-size: 12px; }
+
+.article-toc.collapsed .article-toc-list {
+  display: none;
+}
+
+/* 窄屏隐藏目录(避免挤压正文) */
+@media (max-width: 1024px) {
+  .article-toc {
+    display: none;
+  }
+}

@@ -34,6 +34,34 @@ export default defineConfig({
         return html.replace(/<title>.*?<\/title>/, `<title>${name} - Online Judge</title>`);
       },
     },
+    {
+      // 生产构建注入 CSP meta(开发模式不注入:Vite react-refresh 需要内联脚本,
+      // KaTeX/DOMPurify 渲染 markdown 时也会注入 <style> 与 style 属性,严格 CSP
+      // 会破坏开发体验;生产产物全为打包后的同源资源,可启用严格策略)。
+      name: 'inject-csp',
+      transformIndexHtml(html: string) {
+        if (!isProduction) return html;
+        const csp = [
+          "default-src 'self'",
+          // AdSense 脚本 + Cloudflare Web Analytics beacon(可选功能,未启用广告位时不影响)
+          "script-src 'self' https://pagead2.googlesyndication.com https://static.cloudflareinsights.com",
+          // KaTeX 与 DOMPurify 白名单内的 style 属性需内联样式
+          "style-src 'self' 'unsafe-inline'",
+          // 头像/图标可能来自外部 CDN
+          "img-src 'self' data: https:",
+          "font-src 'self' data:",
+          // API/SSE 同源;一言来自外部接口
+          "connect-src 'self' https://v1.hitokoto.cn",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "form-action 'self'",
+        ].join('; ');
+        return html.replace(
+          /<meta name="viewport"[^>]*>/,
+          (m) => `${m}\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`
+        );
+      },
+    },
   ],
   define: {
     SITE_CONFIG: JSON.stringify(siteConfig),

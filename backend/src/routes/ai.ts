@@ -4,6 +4,8 @@ import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { fetchTestcases } from '../utils/github-testcases';
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../ai-default-prompt';
 import { escapeLikeWildcard } from '../utils/helpers';
+import { fetchWithTimeout } from '../utils/fetch-timeout';
+import { createRateLimiter } from '../middleware/rateLimit';
 
 const ai = new Hono<AppType>();
 
@@ -397,7 +399,7 @@ const RETRY_BASE_MS = 1000;
 
 async function fetchWithRetry(url: string, init: RequestInit, maxRetries = MAX_RETRY): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const response = await fetch(url, init);
+    const response = await fetchWithTimeout(url, init);
     if (response.status !== 429) return response;
     if (attempt === maxRetries) return response; // 最后一次也返回 429，由调用方处理
     const retryAfter = response.headers.get('Retry-After');
@@ -413,7 +415,7 @@ async function fetchWithRetry(url: string, init: RequestInit, maxRetries = MAX_R
     await new Promise((r) => setTimeout(r, waitMs));
   }
   // unreachable
-  return fetch(url, init);
+  return fetchWithTimeout(url, init);
 }
 
 // Helper: call OpenAI-compatible API (also works for Zhipu, Aliyun, etc.)
@@ -642,7 +644,8 @@ async function extractResponse(
 }
 
 // POST /ai/chat - AI chat with tool-calling (agentic loop, streaming SSE)
-ai.post('/chat', authMiddleware, async (c) => {
+// 限流:按用户 10 次 / 10 分钟,防止 AI 配额被滥用耗尽(chat 含多轮工具调用,成本高)
+ai.post('/chat', authMiddleware, createRateLimiter('aiChat', 10, 600_000), async (c) => {
   const user = c.get('user');
   const settings = await getAISettings(c);
 
@@ -910,7 +913,8 @@ async function processToolCalls(
 }
 
 // POST /ai/complete - AI code completion
-ai.post('/complete', authMiddleware, async (c) => {
+// 限流:按用户 30 次 / 10 分钟(单次补全成本低于 chat,但同样防止滥用)
+ai.post('/complete', authMiddleware, createRateLimiter('aiComplete', 30, 600_000), async (c) => {
   const user = c.get('user');
   const settings = await getAISettings(c);
 

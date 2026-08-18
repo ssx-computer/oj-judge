@@ -596,3 +596,64 @@
     min-width: 0;
   }
 }
+
+/* ── 每日一题卡片 ── */
+.home-daily-problem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 14px 18px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--text-primary, #333);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.home-daily-problem:hover {
+  border-color: var(--accent, #4f6ef7);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.home-daily-problem .daily-icon {
+  color: var(--accent, #4f6ef7);
+  flex-shrink: 0;
+}
+
+.home-daily-problem .daily-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.home-daily-problem .daily-label {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  background: var(--accent-light, rgba(79, 110, 247, 0.1));
+  padding: 3px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.home-daily-problem .daily-title {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-daily-problem .daily-difficulty {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.home-daily-problem .daily-arrow {
+  color: var(--text-muted, #aaa);
+  flex-shrink: 0;
+}

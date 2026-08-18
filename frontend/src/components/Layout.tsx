@@ -28,7 +28,19 @@ export default function Layout({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unreadMsg, setUnreadMsg] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [friendLinks, setFriendLinks] = useState<{ id: number; name: string; url: string; description: string; icon: string }[]>([]);
+  const [footerPages, setFooterPages] = useState<{ id: number; slug: string; title: string }[]>([]);
   const isLuogu = config.site.theme === 'luogu';
+
+  // 页脚友情链接 + 自定义页面导航
+  useEffect(() => {
+    api.getFriendLinks()
+      .then((data) => setFriendLinks(data.links || []))
+      .catch(() => { /* ignore */ });
+    api.getPages()
+      .then((data) => setFooterPages(data.pages || []))
+      .catch(() => { /* ignore */ });
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -132,12 +144,28 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {t(link.label)}
               </Link>
             ))}
+            {footerPages.map((page) => (
+              <Link key={page.id} to={`/page/${page.slug}`}>
+                {page.title}
+              </Link>
+            ))}
             {config.footer.links.map((link, i) => (
               <a key={i} href={link.url} target="_blank" rel="noopener noreferrer">
                 {link.name}
               </a>
             ))}
           </div>
+          {friendLinks.length > 0 && (
+            <div className="footer-friend-links">
+              <span className="footer-friend-label">{t('friendLinks.footerLabel')}</span>
+              {friendLinks.map((link) => (
+                <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" title={link.description}>
+                  {link.icon && <img src={link.icon} alt="" className="footer-friend-icon" loading="lazy" />}
+                  {link.name}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       </footer>
       <Toast />

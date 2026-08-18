@@ -372,6 +372,66 @@ contests.post('/', authMiddleware, contestAdminMiddleware, contestCreateLimiter,
   return c.json({ success: true, data: { id: contestId, message: 'Contest created' } }, 201);
 });
 
+// POST /contests/:id/clone — 克隆比赛(admin):复制比赛字段 + 题目关联
+// 已结束的比赛时间自动顺延到未来,避免克隆出已结束的比赛
+contests.post('/:id/clone', authMiddleware, contestAdminMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id')!);
+
+  const source: any = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
+  if (!source) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 计算新时间:原比赛未结束则沿用,已结束则顺延(时长保持一致)
+  const nowMs = Date.now();
+  const startMs = parseContestTimeToMs(source.start_time);
+  const endMs = parseContestTimeToMs(source.end_time);
+  const durationMs = Math.max(0, endMs - startMs);
+  let newStartIso = source.start_time;
+  let newEndIso = source.end_time;
+  if (endMs <= nowMs) {
+    newStartIso = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString(); // 明天开始
+    newEndIso = new Date(nowMs + 24 * 60 * 60 * 1000 + durationMs).toISOString();
+  }
+
+  const newTitle = `${source.title}（副本）`;
+  const result = await c.env.DB.prepare(
+    `INSERT INTO contests (title, description, start_time, end_time, status, is_public, created_by, scoring_type, is_rated, allow_virtual, duration_minutes, freeze_minutes)
+     VALUES (?, ?, ?, ?, 'upcoming', ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    newTitle,
+    source.description || '',
+    newStartIso,
+    newEndIso,
+    source.is_public,
+    user.userId,
+    source.scoring_type,
+    source.is_rated,
+    source.allow_virtual,
+    source.duration_minutes,
+    source.freeze_minutes || 0,
+  ).run();
+  const newId = result.meta.last_row_id;
+
+  // 复制题目关联
+  const problems = await c.env.DB.prepare(
+    'SELECT problem_id, label, score FROM contest_problems WHERE contest_id = ? ORDER BY label'
+  ).bind(id).all();
+  if (problems.results.length > 0) {
+    const stmts = (problems.results as any[]).map((p) =>
+      c.env.DB.prepare(
+        'INSERT INTO contest_problems (contest_id, problem_id, label, score) VALUES (?, ?, ?, ?)'
+      ).bind(newId, p.problem_id, p.label, p.score)
+    );
+    await c.env.DB.batch(stmts);
+  }
+
+  await recordAuditLog(c, 'contest:clone', user.userId, user.username);
+
+  return c.json({ success: true, data: { id: newId, title: newTitle, message: 'Contest cloned' } }, 201);
+});
+
 // Update contest (admin only)
 contests.put('/:id', authMiddleware, contestAdminMiddleware, async (c) => {
   const user = c.get('user');
@@ -498,7 +558,9 @@ contests.get('/:id/problems', authMiddleware, async (c) => {
   }
 
   const problems = await c.env.DB.prepare(
-    `SELECT cp.label, cp.score, p.id, p.title, p.slug, p.difficulty, p.tags, p.time_limit, p.memory_limit
+    `SELECT cp.label, cp.score, p.id, p.title, p.slug, p.difficulty, p.tags, p.time_limit, p.memory_limit,
+            (SELECT COUNT(*) FROM submissions WHERE problem_id = p.id AND status = 'accepted') as accepted_count,
+            (SELECT COUNT(*) FROM submissions WHERE problem_id = p.id) as submission_count
      FROM contest_problems cp JOIN problems p ON cp.problem_id = p.id
      WHERE cp.contest_id = ? ORDER BY cp.label`
   ).bind(id).all();
@@ -571,17 +633,15 @@ contests.post('/:id/register', authMiddleware, contestRegisterLimiter, async (c)
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
 
-  const existing = await c.env.DB.prepare(
-    'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
-  ).bind(id, user.userId).first();
+  // 原子报名:依赖 contest_participants 上的 UNIQUE(contest_id, user_id) 约束,
+  // 并发双请求时第二个 INSERT 冲突被吞掉(changes=0),返回友好 400 而非 500
+  const result = await c.env.DB.prepare(
+    'INSERT INTO contest_participants (contest_id, user_id) VALUES (?, ?) ON CONFLICT(contest_id, user_id) DO NOTHING'
+  ).bind(id, user.userId).run();
 
-  if (existing) {
+  if (result.meta.changes === 0) {
     return c.json({ success: false, error: { message: 'Already registered', code: 'BAD_REQUEST' } }, 400);
   }
-
-  await c.env.DB.prepare(
-    'INSERT INTO contest_participants (contest_id, user_id) VALUES (?, ?)'
-  ).bind(id, user.userId).run();
 
   return c.json({ success: true, data: { message: 'Registered successfully' } });
 });
@@ -749,6 +809,337 @@ contests.get('/:id/rankings', optionalAuthMiddleware, async (c) => {
   });
 });
 
+// GET /contests/ical — 导出当前用户已报名比赛的 ICS 日历文件
+contests.get('/ical', authMiddleware, async (c) => {
+  const user = c.get('user');
+
+  const rows = await c.env.DB.prepare(
+    `SELECT c.id, c.title, c.start_time, c.end_time, c.description
+     FROM contests c JOIN contest_participants cp ON c.id = cp.contest_id
+     WHERE cp.user_id = ? AND cp.is_virtual = 0
+     ORDER BY c.start_time ASC`
+  ).bind(user.userId).all();
+
+  // ICS 转义:逗号/分号/换行/反斜杠
+  const esc = (s: string) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+
+  // 转 UTC 格式 YYYYMMDDTHHMMSSZ
+  const toUtc = (t: string) => {
+    const d = new Date(parseContestTimeToMs(t));
+    return isNaN(d.getTime())
+      ? ''
+      : d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  };
+
+  const nowIso = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const events = (rows.results as any[])
+    .filter((r) => toUtc(r.start_time) && toUtc(r.end_time))
+    .map((r) => {
+      const lines = [
+        'BEGIN:VEVENT',
+        `UID:contest-${r.id}@oj`,
+        `DTSTAMP:${nowIso}`,
+        `DTSTART:${toUtc(r.start_time)}`,
+        `DTEND:${toUtc(r.end_time)}`,
+        `SUMMARY:${esc(r.title)}`,
+        `DESCRIPTION:${esc(r.description || '')}`,
+        'END:VEVENT',
+      ];
+      return lines.join('\r\n');
+    })
+    .join('\r\n');
+
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//OJ System//Contests//ZH-CN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    events,
+    'END:VCALENDAR',
+  ].filter(Boolean).join('\r\n');
+
+  c.header('Content-Type', 'text/calendar; charset=utf-8');
+  c.header('Content-Disposition', 'attachment; filename="my-contests.ics"');
+  c.header('Cache-Control', 'no-store');
+  return c.body(ics);
+});
+
+// GET /contests/:id/certificate — 生成当前用户的比赛成绩证书(SVG→PNG)
+// 需要:比赛已结束且用户已报名(有 final_rank)
+contests.get('/:id/certificate', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id')!);
+
+  const contest: any = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (effectiveContestStatus(contest) !== 'ended') {
+    return c.json({ success: false, error: { message: 'Certificate is only available after the contest ends', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  const participant: any = await c.env.DB.prepare(
+    'SELECT cp.final_rank, cp.is_virtual, u.username FROM contest_participants cp JOIN users u ON cp.user_id = u.id WHERE cp.contest_id = ? AND cp.user_id = ? AND cp.is_virtual = 0'
+  ).bind(id, user.userId).first();
+  if (!participant || participant.final_rank == null) {
+    return c.json({ success: false, error: { message: 'No rank recorded for this contest', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const escXml = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const rank = participant.final_rank;
+  const medalText = rank === 1 ? '🏆 冠军' : rank === 2 ? '🥈 亚军' : rank === 3 ? '🥉 季军' : `第 ${rank} 名`;
+  const medalColor = rank === 1 ? '#f5a623' : rank === 2 ? '#8a8f98' : rank === 3 ? '#c08a4e' : '#4f6ef7';
+  const title = contest.title || 'OJ Contest';
+  const username = participant.username || user.username;
+  const dateStr = new Date(parseContestTimeToMs(contest.end_time)).toLocaleDateString('zh-CN');
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <rect width="800" height="520" fill="#faf8f4"/>
+  <rect x="24" y="24" width="752" height="472" fill="none" stroke="${medalColor}" stroke-width="4"/>
+  <rect x="36" y="36" width="728" height="448" fill="none" stroke="${medalColor}" stroke-width="1" stroke-dasharray="6 4"/>
+  <text x="400" y="120" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#888">成绩证书</text>
+  <text x="400" y="180" text-anchor="middle" font-family="sans-serif" font-size="30" fill="#222">${escXml(title)}</text>
+  <text x="400" y="250" text-anchor="middle" font-family="sans-serif" font-size="24" fill="#444">${escXml(username)}</text>
+  <text x="400" y="320" text-anchor="middle" font-family="sans-serif" font-size="36" font-weight="bold" fill="${medalColor}">${medalText}</text>
+  <text x="400" y="390" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#999">比赛日期:${escXml(dateStr)}</text>
+  <text x="400" y="440" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#bbb">— OJ System —</text>
+</svg>`;
+
+  const { svgToPng } = await import('../utils/captcha');
+  const pngBytes = await svgToPng(svg);
+  // Uint8Array 需转为 ArrayBuffer 以满足 Hono BodyInit 类型
+  const pngBuffer = pngBytes.slice().buffer as ArrayBuffer;
+
+  c.header('Content-Type', 'image/png');
+  c.header('Content-Disposition', `attachment; filename="certificate-${id}-${user.userId}.png"`);
+  c.header('Cache-Control', 'no-store');
+  return c.body(pngBuffer);
+});
+
+// GET /contests/:id/rankings/export — 导出排行榜 CSV(与 rankings 端点同数据口径)
+contests.get('/:id/rankings/export', optionalAuthMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id')!);
+
+  const contest = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 私有比赛(is_public=0)仅管理员或已报名参与者可见,与 rankings 端点一致
+  const user = c.get('user');
+  const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user?.permissions) && user.permissions.includes('contest_admin')));
+  if ((contest as any).is_public !== 1 && !isAdmin) {
+    const registered = user ? await c.env.DB.prepare(
+      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+    ).bind(id, user.userId).first() : null;
+    if (!registered) {
+      return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+    }
+  }
+
+  const scoringType = normalizeScoringType((contest as any).scoring_type);
+  const onlyVirtual = c.req.query('virtual') === '1';
+
+  const participants = await c.env.DB.prepare(
+    `SELECT cp.user_id, cp.is_virtual, cp.virtual_start_time, u.username FROM contest_participants cp JOIN users u ON cp.user_id = u.id WHERE cp.contest_id = ?`
+  ).bind(id).all();
+  const contestProblems = await c.env.DB.prepare(
+    'SELECT cp.label, cp.problem_id, cp.score FROM contest_problems cp WHERE cp.contest_id = ? ORDER BY cp.label'
+  ).bind(id).all();
+
+  // 封榜与时间窗口逻辑与 rankings 端点一致
+  const nowMs = Date.now();
+  const endMs = parseContestTimeToMs((contest as any).end_time);
+  const freezeMinutes = parseInt((contest as any).freeze_minutes) || 0;
+  const freezeStartMs = endMs - freezeMinutes * 60000;
+  const boardFrozen = effectiveContestStatus(contest) === 'running' && freezeMinutes > 0 && nowMs >= freezeStartMs;
+  const rankingEndTime = boardFrozen ? new Date(freezeStartMs).toISOString() : new Date(parseContestTimeToMs((contest as any).end_time)).toISOString();
+
+  const userIds = participants.results.map((p: any) => p.user_id);
+  const problemIds = contestProblems.results.map((p: any) => p.problem_id);
+  const placeholders = userIds.map(() => '?').join(',');
+  const problemPlaceholders = problemIds.map(() => '?').join(',');
+
+  const subLowerBound = (contest as any).start_time;
+  const subQuery = `SELECT id, user_id, problem_id, status, score, time_used, created_at FROM submissions
+     WHERE user_id IN (${placeholders}) AND problem_id IN (${problemPlaceholders})
+     AND contest_id = ?
+     AND status != 'pending' AND status != 'running'
+     AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`;
+  const allSubmissions = await c.env.DB.prepare(subQuery)
+    .bind(...userIds, ...problemIds, id, subLowerBound, rankingEndTime).all();
+
+  const virtualStartMap: Record<number, number> = {};
+  for (const p of participants.results as any[]) {
+    if (p.is_virtual && p.virtual_start_time) {
+      virtualStartMap[p.user_id] = parseContestTimeToMs(p.virtual_start_time);
+    }
+  }
+
+  const rankings = buildContestRankings({
+    submissions: allSubmissions.results as any[],
+    participants: participants.results as any[],
+    contestProblems: contestProblems.results as any[],
+    scoringType,
+    contestStartTime: parseContestTimeToMs((contest as any).start_time),
+    virtualStartMap,
+  });
+
+  // 构建 CSV
+  const esc = (v: any) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const labels = (contestProblems.results as any[]).map((p: any) => p.label);
+  const header = ['rank', 'username', 'user_id', 'total_score', 'accepted_count', 'total_penalty', ...labels];
+  const rows = rankings.map((r: any) => {
+    const cells = [r.rank, r.username, r.user_id, r.total_score, r.accepted_count, r.total_penalty];
+    for (const label of labels) {
+      const pr = (r.problems || {})[label];
+      cells.push(pr ? `${pr.status}:${pr.score ?? 0}` : '');
+    }
+    return cells.map(esc).join(',');
+  });
+  const csv = '\uFEFF' + [header.map(esc).join(','), ...rows].join('\r\n');
+
+  const filename = `contest-${id}-rankings.csv`;
+  c.header('Content-Type', 'text/csv; charset=utf-8');
+  c.header('Content-Disposition', `attachment; filename="${filename}"`);
+  c.header('Cache-Control', 'no-store');
+  return c.body(csv);
+});
+
+// GET /contests/:id/rankings/image — 榜单长图(SVG→PNG,可分享)
+// 与 CSV 导出同数据口径,渲染为图片便于分享
+contests.get('/:id/rankings/image', optionalAuthMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id')!);
+
+  const contest = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 私有比赛权限与 rankings 端点一致
+  const user = c.get('user');
+  const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user?.permissions) && user.permissions.includes('contest_admin')));
+  if ((contest as any).is_public !== 1 && !isAdmin) {
+    const registered = user ? await c.env.DB.prepare(
+      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+    ).bind(id, user.userId).first() : null;
+    if (!registered) {
+      return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+    }
+  }
+
+  const scoringType = normalizeScoringType((contest as any).scoring_type);
+  const participants = await c.env.DB.prepare(
+    `SELECT cp.user_id, cp.is_virtual, cp.virtual_start_time, u.username FROM contest_participants cp JOIN users u ON cp.user_id = u.id WHERE cp.contest_id = ? AND cp.is_virtual = 0`
+  ).bind(id).all();
+  const contestProblems = await c.env.DB.prepare(
+    'SELECT cp.label, cp.problem_id, cp.score FROM contest_problems cp WHERE cp.contest_id = ? ORDER BY cp.label'
+  ).bind(id).all();
+
+  const userIds = participants.results.map((p: any) => p.user_id);
+  const problemIds = contestProblems.results.map((p: any) => p.problem_id);
+  const placeholders = userIds.map(() => '?').join(',');
+  const problemPlaceholders = problemIds.map(() => '?').join(',');
+
+  const allSubmissions = await c.env.DB.prepare(
+    `SELECT id, user_id, problem_id, status, score, time_used, created_at FROM submissions
+     WHERE user_id IN (${placeholders}) AND problem_id IN (${problemPlaceholders})
+     AND contest_id = ?
+     AND status != 'pending' AND status != 'running'
+     AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`
+  ).bind(...userIds, ...problemIds, id, (contest as any).start_time, (contest as any).end_time).all();
+
+  const rankings = buildContestRankings({
+    submissions: allSubmissions.results as any[],
+    participants: participants.results as any[],
+    contestProblems: contestProblems.results as any[],
+    scoringType,
+    contestStartTime: parseContestTimeToMs((contest as any).start_time),
+    virtualStartMap: {},
+  });
+
+  // 渲染 SVG 长图:标题 + 排名表(最多展示 30 名)
+  const escXml = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const shown = rankings.slice(0, 30);
+  const labels = (contestProblems.results as any[]).map((p: any) => p.label);
+  const rowH = 36;
+  const headerH = 54;
+  const titleH = 88;
+  const padding = 32;
+  const width = 720;
+  const colRanks = 70;
+  const colUser = 220;
+  const colScore = 120;
+  const colAc = 110;
+  const colPenalty = scoringType === 'icpc' ? 110 : 0;
+  const problemColW = Math.max(44, Math.min(72, (width - padding * 2 - colRanks - colUser - colScore - colAc - colPenalty) / Math.max(1, labels.length)));
+  const height = titleH + headerH + shown.length * rowH + padding * 2;
+
+  let rowsXml = '';
+  const cellStyle = (x: number, w: number, bold = false, color = '#333') =>
+    `<text x="${x}" y="${0}" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="${bold ? 600 : 400}" fill="${color}">`;
+  shown.forEach((r: any, idx: number) => {
+    const y = titleH + headerH + idx * rowH + rowH / 2 + 5;
+    const medal = r.rank === 1 ? '#f5a623' : r.rank === 2 ? '#8a8f98' : r.rank === 3 ? '#c08a4e' : '#333';
+    rowsXml += `<text x="${padding + colRanks / 2}" y="${y}" text-anchor="middle" font-family="sans-serif" font-size="15" font-weight="700" fill="${medal}">${r.rank}</text>`;
+    rowsXml += `<text x="${padding + colRanks + 12}" y="${y}" font-family="sans-serif" font-size="14" fill="#222">${escXml(r.username)}</text>`;
+    rowsXml += `<text x="${padding + colRanks + colUser + colScore / 2}" y="${y}" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="600" fill="#333">${r.total_score ?? '—'}</text>`;
+    rowsXml += `<text x="${padding + colRanks + colUser + colScore + colAc / 2}" y="${y}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#3fb950">${r.accepted_count ?? 0}</text>`;
+    if (scoringType === 'icpc') {
+      rowsXml += `<text x="${padding + colRanks + colUser + colScore + colAc + colPenalty / 2}" y="${y}" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#888">${r.total_penalty ?? 0}</text>`;
+    }
+    labels.forEach((label: string, li: number) => {
+      const pr = (r.problems || {})[label];
+      const x = padding + colRanks + colUser + colScore + colAc + colPenalty + li * problemColW + problemColW / 2;
+      if (pr) {
+        const color = pr.status === 'accepted' ? '#3fb950' : '#f85149';
+        rowsXml += `<text x="${x}" y="${y}" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="${color}">${pr.status === 'accepted' ? 'AC' : pr.score != null ? pr.score : '—'}</text>`;
+      }
+    });
+    if (idx % 2 === 1) {
+      rowsXml = `<rect x="${padding}" y="${titleH + headerH + idx * rowH}" width="${width - padding * 2}" height="${rowH}" fill="#f5f5f8"/>` + rowsXml;
+    }
+  });
+
+  const headerY = titleH + headerH / 2 + 5;
+  let headerXml = `<text x="${padding + colRanks / 2}" y="${headerY}" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="#888">Rank</text>`;
+  headerXml += `<text x="${padding + colRanks + 12}" y="${headerY}" font-family="sans-serif" font-size="13" font-weight="600" fill="#888">User</text>`;
+  headerXml += `<text x="${padding + colRanks + colUser + colScore / 2}" y="${headerY}" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="#888">Score</text>`;
+  headerXml += `<text x="${padding + colRanks + colUser + colScore + colAc / 2}" y="${headerY}" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="#888">AC</text>`;
+  if (scoringType === 'icpc') {
+    headerXml += `<text x="${padding + colRanks + colUser + colScore + colAc + colPenalty / 2}" y="${headerY}" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="#888">Penalty</text>`;
+  }
+  labels.forEach((label: string, li: number) => {
+    const x = padding + colRanks + colUser + colScore + colAc + colPenalty + li * problemColW + problemColW / 2;
+    headerXml += `<text x="${x}" y="${headerY}" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="600" fill="#888">${label}</text>`;
+  });
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="${width}" height="${height}" fill="#ffffff"/>
+  <text x="${padding}" y="${48}" font-family="sans-serif" font-size="24" font-weight="700" fill="#222">${escXml((contest as any).title)}</text>
+  <text x="${width - padding}" y="${48}" text-anchor="end" font-family="sans-serif" font-size="13" fill="#999">榜单 · ${scoringType.toUpperCase()}</text>
+  <line x1="${padding}" y1="${titleH - 12}" x2="${width - padding}" y2="${titleH - 12}" stroke="#eee" stroke-width="1"/>
+  <rect x="${padding}" y="${titleH}" width="${width - padding * 2}" height="${headerH}" fill="#f0f2f8"/>
+  ${headerXml}
+  ${rowsXml}
+</svg>`;
+
+  const { svgToPng } = await import('../utils/captcha');
+  const pngBytes = await svgToPng(svg);
+  const pngBuffer = pngBytes.slice().buffer as ArrayBuffer;
+
+  c.header('Content-Type', 'image/png');
+  c.header('Content-Disposition', `attachment; filename="contest-${id}-rankings.png"`);
+  c.header('Cache-Control', 'no-store');
+  return c.body(pngBuffer);
+});
+
 // Check if user is registered
 contests.get('/:id/registration', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -885,18 +1276,16 @@ contests.post('/:id/virtual-register', authMiddleware, virtualRegisterLimiter, a
     return c.json({ success: false, error: { message: 'Virtual participation is only available for ended contests', code: 'BAD_REQUEST' } }, 400);
   }
 
-  // Check if already registered (virtual or regular)
-  const existing = await c.env.DB.prepare(
-    'SELECT id, is_virtual FROM contest_participants WHERE contest_id = ? AND user_id = ?'
-  ).bind(id, user.userId).first();
-  if (existing) {
-    return c.json({ success: false, error: { message: 'Already registered', code: 'BAD_REQUEST' } }, 400);
-  }
-
+  // 原子报名:依赖 UNIQUE(contest_id, user_id) 约束,并发双请求时第二个冲突
+  // 被吞掉(changes=0),返回友好 400 而非 500(与普通报名一致)
   const nowIso = new Date().toISOString();
   const result = await c.env.DB.prepare(
-    'INSERT INTO contest_participants (contest_id, user_id, is_virtual, virtual_start_time) VALUES (?, ?, 1, ?)'
+    'INSERT INTO contest_participants (contest_id, user_id, is_virtual, virtual_start_time) VALUES (?, ?, 1, ?) ON CONFLICT(contest_id, user_id) DO NOTHING'
   ).bind(id, user.userId, nowIso).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({ success: false, error: { message: 'Already registered', code: 'BAD_REQUEST' } }, 400);
+  }
 
   return c.json({
     success: true,

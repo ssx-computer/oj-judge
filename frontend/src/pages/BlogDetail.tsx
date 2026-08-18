@@ -1,8 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { Heart, MessageCircle, Eye, ArrowLeft, Trash2, Edit } from 'lucide-react';
+import ArticleToc from '../components/ArticleToc';
+import ReadingProgress from '../components/ReadingProgress';
+import { Heart, MessageCircle, Eye, ArrowLeft, Trash2, Edit, CornerUpLeft, CornerUpRight, ThumbsUp, X } from 'lucide-react';
+import EmojiPicker from '../components/EmojiPicker';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAuthStore } from '../store/auth';
@@ -21,6 +24,9 @@ export default function BlogDetail() {
   const [liked, setLiked] = useState(false);
   const [commentInput, setCommentInput] = useState('');
   const [postingComment, setPostingComment] = useState(false);
+  // 回复目标: { id, username } — 点击"回复"后填入 @username 前缀
+  const [replyTo, setReplyTo] = useState<{ id: number; username: string } | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   useDocumentTitle(blog?.title || t('blogs.title'));
 
   const fetchBlog = useCallback(async () => {
@@ -72,8 +78,9 @@ export default function BlogDetail() {
     if (!commentInput.trim()) return;
     setPostingComment(true);
     try {
-      await api.postBlogComment(blogId, commentInput.trim());
+      await api.postBlogComment(blogId, commentInput.trim(), replyTo?.id);
       setCommentInput('');
+      setReplyTo(null);
       addToast('success', t('blogs.commentPosted'));
       await fetchComments();
       setBlog({ ...blog, comment_count: blog.comment_count + 1 });
@@ -81,6 +88,29 @@ export default function BlogDetail() {
       addToast('error', e.message || t('common.error'));
     } finally {
       setPostingComment(false);
+    }
+  };
+
+  // 回复:设置回复目标并把 @username 填入输入框
+  const handleReply = (c: any) => {
+    setReplyTo({ id: c.id, username: c.username });
+    setCommentInput(`@${c.username} `);
+    document.getElementById('blog-comment-input')?.focus();
+  };
+
+  // 取消回复
+  const handleCancelReply = () => {
+    setReplyTo(null);
+    setCommentInput('');
+  };
+
+  // 点赞评论
+  const handleLikeComment = async (commentId: number) => {
+    try {
+      const result = await api.toggleBlogCommentLike(commentId);
+      setComments((prev) => prev.map((c) => c.id === commentId ? { ...c, liked_by_me: result.liked, like_count: (c.like_count || 0) + (result.liked ? 1 : -1) } : c));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
     }
   };
 
@@ -130,7 +160,13 @@ export default function BlogDetail() {
             </div>
           )}
         </header>
-        <div className="article-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(blog.content || '') }} />
+        <div className="article-layout">
+          <div className="article-layout-main">
+            <ReadingProgress containerRef={contentRef} />
+            <div className="article-content" ref={contentRef} dangerouslySetInnerHTML={{ __html: renderMarkdown(blog.content || '') }} />
+          </div>
+          <ArticleToc containerRef={contentRef} />
+        </div>
         <footer className="article-footer">
           <div className="article-actions">
             <button className={`action-btn ${liked ? 'liked' : ''}`} onClick={handleLike} disabled={!user}>
@@ -163,7 +199,19 @@ export default function BlogDetail() {
         <h2>{t('blogs.comments')} ({comments.length})</h2>
         {user && (
           <form className="comment-form" onSubmit={handlePostComment}>
+            {replyTo && (
+              <div className="reply-indicator">
+                <span>{t('blogs.replyingTo').replace('{0}', `@${replyTo.username}`)}</span>
+                <button type="button" className="btn-icon-sm" onClick={handleCancelReply} title={t('common.cancel')}>
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+              <EmojiPicker onInsert={(text) => setCommentInput((prev) => prev + text)} />
+            </div>
             <textarea
+              id="blog-comment-input"
               placeholder={t('blogs.commentPlaceholder')}
               value={commentInput}
               onChange={(e) => setCommentInput(e.target.value)}
@@ -188,9 +236,31 @@ export default function BlogDetail() {
                 <div className="comment-body">
                   <div className="comment-header">
                     <Link to={`/users/${c.username}`} className="comment-author">{c.username}</Link>
+                    {c.user_title && <span className="user-title-badge">{c.user_title}</span>}
                     <span className="comment-time">{new Date(c.created_at).toLocaleString()}</span>
                   </div>
+                  {c.parent_id && (
+                    <div className="comment-parent-ref">
+                      <CornerUpRight size={12} />
+                      <span>{t('blogs.replyingTo').replace('{0}', `@${c.parent_username || ''}`)}</span>
+                    </div>
+                  )}
                   <div className="comment-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(c.content || '') }} />
+                  <div className="comment-actions">
+                    {user && (
+                      <button className="comment-action-btn" onClick={() => handleReply(c)}>
+                        <CornerUpLeft size={13} /> {t('blogs.reply')}
+                      </button>
+                    )}
+                    {user && (
+                      <button
+                        className={`comment-action-btn ${c.liked_by_me ? 'liked' : ''}`}
+                        onClick={() => handleLikeComment(c.id)}
+                      >
+                        <ThumbsUp size={13} /> {c.like_count || 0}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))

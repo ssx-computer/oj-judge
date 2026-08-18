@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { useToastStore } from '../store/toast';
@@ -7,7 +7,7 @@ import RatingBadge from '../components/RatingBadge';
 import { SkeletonTable } from '../components/Skeleton';
 import { getRatingColor } from '../utils/rating';
 import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
-import { Trophy, Calendar, Users, ChevronRight, UserPlus, CheckCircle, Clock, Eye, MessageSquare, BookOpen, Timer, Edit3, XCircle, AlertCircle, Play, Sparkles, TrendingUp, TrendingDown, Bell, Plus, Send, X } from 'lucide-react';
+import { Trophy, Calendar, Users, ChevronRight, UserPlus, CheckCircle, Clock, Eye, MessageSquare, BookOpen, Timer, Edit3, XCircle, AlertCircle, Play, Sparkles, TrendingUp, TrendingDown, Bell, Plus, Send, X, Download, Copy, Award, Image } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import './ContestDetail.css';
@@ -47,6 +47,7 @@ export default function ContestDetail() {
   const matchRoot = isTeamMatch ? `/team/${teamId}/match/${matchId}` : `/match/${id}`;
   const { user } = useAuthStore();
   const addToast = useToastStore((s) => s.addToast);
+  const navigate = useNavigate();
   const [contest, setContest] = useState<any>(null);
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
   const [serverStatus, setServerStatus] = useState<string>('');
@@ -92,22 +93,23 @@ export default function ContestDetail() {
     return () => { cancelled = true; };
   }, [isTeamMatch, teamId, user]);
 
-  const fetchAnnouncements = useCallback(async () => {
+  const fetchAnnouncements = useCallback(async (cancelled?: () => boolean) => {
     try {
       const data = isTeamMatch
         ? await api.getTeamContestAnnouncements(Number(teamId), Number(matchId))
         : await api.getContestAnnouncements(Number(id));
-      setAnnouncements(data.announcements || []);
+      // 竞态保护:组件已卸载或参数已切换时丢弃过期响应
+      if (!cancelled?.()) setAnnouncements(data.announcements || []);
     } catch { /* ignore */ }
   }, [id, teamId, matchId, isTeamMatch]);
 
-  const fetchClarifications = useCallback(async () => {
+  const fetchClarifications = useCallback(async (cancelled?: () => boolean) => {
     if (!user) return;
     try {
       const data = isTeamMatch
         ? await api.getTeamContestClarifications(Number(teamId), Number(matchId))
         : await api.getContestClarifications(Number(id));
-      setClarifications(data.clarifications || []);
+      if (!cancelled?.()) setClarifications(data.clarifications || []);
     } catch { /* ignore */ }
   }, [id, teamId, matchId, isTeamMatch, user]);
 
@@ -181,13 +183,15 @@ export default function ContestDetail() {
     }
   };
 
-  const fetchContest = useCallback(async () => {
+  const fetchContest = useCallback(async (cancelled?: () => boolean) => {
     setLoading(true);
     setLoadError('');
     try {
       const data: any = isTeamMatch
         ? await api.getTeamContest(Number(teamId), Number(matchId))
         : await api.getContest(Number(id));
+      // 竞态保护:参数已切换/组件已卸载时丢弃过期响应,避免旧数据覆盖新数据
+      if (cancelled?.()) return;
       setContest(data.contest);
       // server_time offset: server_time - local_now
       if (data.server_time) {
@@ -208,18 +212,18 @@ export default function ContestDetail() {
         } else if (data.problems_visible) {
           try {
             const p: any = await api.getContestProblems(Number(id));
-            setProblems(p.problems || []);
+            if (!cancelled?.()) setProblems(p.problems || []);
           } catch {
-            setProblems([]);
+            if (!cancelled?.()) setProblems([]);
           }
         } else {
           setProblems([]);
         }
       }
     } catch (e: any) {
-      setLoadError(e.message || t('contests.loadError'));
+      if (!cancelled?.()) setLoadError(e.message || t('contests.loadError'));
     } finally {
-      setLoading(false);
+      if (!cancelled?.()) setLoading(false);
     }
   }, [id, teamId, matchId, user, isTeamMatch]);
 
@@ -276,7 +280,7 @@ export default function ContestDetail() {
           Number(id), 
           page, 
           fetchAll ? 0 : RANKINGS_PAGE_SIZE, 
-          hasVirtual ? 1 : 0
+          hasVirtual
         );
         setRankings(data.rankings || []);
         setRankingProblems(data.problems || []);
@@ -307,6 +311,9 @@ export default function ContestDetail() {
   }, [id, isTeamMatch]);
 
   const getStatus = useCallback((): string => {
+    // contest 尚未加载(null)时安全返回:渲染早期(loading/加载失败)也会调用本函数,
+    // 不能直接解引用 contest.start_time
+    if (!contest) return 'upcoming';
     // 以服务端时间为准：优先使用后端返回的 effective_status
     if (serverStatus === 'upcoming' || serverStatus === 'running' || serverStatus === 'ended') {
       return serverStatus;
@@ -329,12 +336,20 @@ export default function ContestDetail() {
 
   useEffect(() => {
     if (!id && !isTeamMatch) return;
+    // 竞态保护:id/参数切换或组件卸载时,取消标记使在途响应被丢弃,
+    // 避免旧请求结果覆盖新数据
+    let cancelled = false;
+    const isCancelled = () => cancelled;
     endedRefreshDone.current = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchContest();
-    if (user) fetchClarifications();
-    fetchAnnouncements();
+    fetchContest(isCancelled);
+    if (user) fetchClarifications(isCancelled);
+    fetchAnnouncements(isCancelled);
+    return () => { cancelled = true; };
   }, [fetchContest, id, isTeamMatch, fetchAnnouncements, fetchClarifications, user]);
+
+  // 比赛状态(由服务端时间校正后的 getStatus 计算),供倒计时等后续逻辑使用
+  const status = getStatus();
 
   // Countdown timer
   useEffect(() => {
@@ -485,6 +500,52 @@ export default function ContestDetail() {
     }
   };
 
+  // 导出排行榜 CSV
+  const handleExportRankings = async () => {
+    if (!id || isTeamMatch) return;
+    try {
+      await api.exportContestRankings(Number(id));
+      addToast('success', t('contests.exportDone'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  // 导出排行榜长图 PNG
+  const handleExportRankingsImage = async () => {
+    if (!id || isTeamMatch) return;
+    try {
+      await api.exportContestRankingsImage(Number(id));
+      addToast('success', t('contests.exportImageDone'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  // 生成并下载成绩证书
+  const handleDownloadCertificate = async () => {
+    if (!id || isTeamMatch) return;
+    try {
+      await api.downloadContestCertificate(Number(id));
+      addToast('success', t('contests.certificateDone'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  // 克隆比赛(admin)
+  const handleCloneContest = async () => {
+    if (!id || isTeamMatch) return;
+    if (!window.confirm(t('contests.cloneConfirm'))) return;
+    try {
+      const result = await api.cloneContest(Number(id));
+      addToast('success', t('contests.cloneDone'));
+      navigate(`/match/${result.id}/edit`);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
   const getStatusLabel = (status: string) => {
     if (status === 'upcoming') return t('contests.upcoming');
     if (status === 'running') return t('contests.running');
@@ -553,7 +614,6 @@ export default function ContestDetail() {
     );
   }
 
-  const status = getStatus();
   const isRunning = status === 'running';
   const isEnded = status === 'ended';
   // 答疑仅限:比赛进行中(或已结束)且已报名者(主办方始终可答可问)
@@ -743,6 +803,26 @@ export default function ContestDetail() {
                   {t('contests.finalizeRating')}
                 </button>
               )}
+              {(user.role === 'admin' || user.role === 'super_admin') && !isTeamMatch && (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleCloneContest}
+                  title={t('contests.clone')}
+                >
+                  <Copy size={14} />
+                  {t('contests.clone')}
+                </button>
+              )}
+              {!isTeamMatch && registered && status === 'ended' && (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleDownloadCertificate}
+                  title={t('contests.certificate')}
+                >
+                  <Award size={14} />
+                  {t('contests.certificate')}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -908,8 +988,13 @@ export default function ContestDetail() {
                         {problem.title}
                       </Link>
                     </span>
-                    <span className="col-difficulty" style={{width:'80px',fontSize:'12px',color: diffColor,fontWeight:600}}>
+                    <span className="col-difficulty" style={{width:'110px',fontSize:'12px',color: diffColor,fontWeight:600}}>
                       {problem.difficulty || '-'}
+                      {problem.submission_count > 0 && (
+                        <span style={{ display: 'block', color: 'var(--text-secondary)', fontWeight: 400, fontSize: 11 }}>
+                          AC {Math.round(((problem.accepted_count || 0) / problem.submission_count) * 100)}%
+                        </span>
+                      )}
                     </span>
                     <span className="col-score">{problem.score ?? '-'}</span>
                     <span className="col-actions">
@@ -939,6 +1024,26 @@ export default function ContestDetail() {
         {/* Enhanced Rankings Tab */}
         {activeTab === 'rankings' && (
           <div className="contest-rankings">
+            <div className="rankings-toolbar">
+              {!isTeamMatch && rankings.length > 0 && (
+                <>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleExportRankings}
+                    title={t('contests.exportRankings')}
+                  >
+                    <Download size={14} /> {t('contests.exportRankings')}
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleExportRankingsImage}
+                    title={t('contests.exportRankingsImage')}
+                  >
+                    <Image size={14} /> {t('contests.exportRankingsImage')}
+                  </button>
+                </>
+              )}
+            </div>
             {rankings.length === 0 ? (
               <div className="empty-tab">{t('contests.noRankings')}</div>
             ) : (

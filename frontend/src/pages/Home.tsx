@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/auth';
 import { useSettingsStore } from '../store/settings';
 import {
   Megaphone, X, Target, Swords, BookOpen, MessageSquare,
-  ChevronRight, Calendar, Quote, AlertCircle, RefreshCw, Sparkles, Trophy,
+  ChevronRight, Calendar, Quote, AlertCircle, RefreshCw, Sparkles, Trophy, TrendingUp,
 } from 'lucide-react';
 import { DIFFICULTY_COLORS } from '../constants';
 import { t } from '../i18n';
@@ -39,6 +39,8 @@ export default function Home() {
   const [recentDiscussions, setRecentDiscussions] = useState<Discussion[]>([]);
   const [recommendations, setRecommendations] = useState<RecommendedProblem[]>([]);
   const [topUsers, setTopUsers] = useState<RatingChange[]>([]);
+  const [dailyProblem, setDailyProblem] = useState<{ id: number; title: string; slug: string; difficulty: string; tags: string } | null>(null);
+  const [routes, setRoutes] = useState<{ id: number; title: string; slug: string; tags: string; difficulty: string; reason: string }[]>([]);
   const [currentDate] = useState(() => {
     const d = new Date();
     const weekdays = [t('home.sunday'), t('home.monday'), t('home.tuesday'), t('home.wednesday'), t('home.thursday'), t('home.friday'), t('home.saturday')];
@@ -109,14 +111,34 @@ export default function Home() {
     }
   }, []);
 
+  const fetchDailyProblem = useCallback(async () => {
+    try {
+      const data = await api.getDailyProblem();
+      setDailyProblem(data.problem);
+    } catch {
+      // ignore — daily problem is optional
+    }
+  }, []);
+
+  const fetchRoute = useCallback(async () => {
+    try {
+      const data = await api.getProblemRoute(5);
+      setRoutes(data.routes || []);
+    } catch {
+      // ignore — route is optional
+    }
+  }, []);
+
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
     fetchAll();
     fetchHitokoto();
     if (user) fetchRecommendations();
+    if (user) fetchRoute();
     fetchTopUsers();
+    fetchDailyProblem();
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [user, fetchAll, fetchHitokoto, fetchRecommendations, fetchTopUsers]);
+  }, [user, fetchAll, fetchHitokoto, fetchRecommendations, fetchRoute, fetchTopUsers, fetchDailyProblem]);
 
   const getContestStatus = (contest: any) => {
     const start = parseContestTimeToMs(contest.start_time);
@@ -200,6 +222,21 @@ export default function Home() {
         </button>
       ) : null}
 
+      {/* Daily Problem */}
+      {dailyProblem && (
+        <Link to={`/problems/${dailyProblem.slug}`} className="home-daily-problem">
+          <Calendar size={18} className="daily-icon" />
+          <div className="daily-main">
+            <span className="daily-label">{t('home.dailyProblem')}</span>
+            <span className="daily-title">{dailyProblem.title}</span>
+          </div>
+          <span className="daily-difficulty" style={{ color: DIFFICULTY_COLORS[dailyProblem.difficulty] || undefined }}>
+            {dailyProblem.difficulty}
+          </span>
+          <ChevronRight size={16} className="daily-arrow" />
+        </Link>
+      )}
+
       {/* Content Grid */}
       {fetchError && (
         <div className="error-banner">
@@ -258,6 +295,32 @@ export default function Home() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 做题路线推荐(登录用户) */}
+      {user && routes.length > 0 && (
+        <div className="home-recommend-section">
+          <div className="home-recommend-header">
+            <div className="recommend-title-block">
+              <TrendingUp size={18} className="recommend-icon" />
+              <h3>{t('home.learningRoute')}</h3>
+            </div>
+          </div>
+          <div className="recommend-cards">
+            {routes.map((p: any) => (
+              <Link key={p.id} to={`/problems/${p.slug || p.id}`} className="recommend-card">
+                <div className="recommend-card-header">
+                  <span className="difficulty-dot" style={{ color: DIFFICULTY_COLORS[p.difficulty] || '#8b8fa3' }}>●</span>
+                  <span className="recommend-card-difficulty">{p.difficulty}</span>
+                </div>
+                <div className="recommend-card-title">{p.title}</div>
+                {p.reason && (
+                  <div className="recommend-card-reason">{p.reason}</div>
+                )}
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

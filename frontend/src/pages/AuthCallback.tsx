@@ -18,7 +18,12 @@ export default function AuthCallback() {
   const { setToken, fetchUser } = useAuthStore();
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
-  const token = searchParams.get('token');
+  // token 通过 URL fragment(#token=)传递(后端重定向),避免 JWT 进入查询参数
+  // 而落入浏览器历史/代理日志;错误信息仍走查询参数
+  const hashToken = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token')
+    : null;
+  const token = hashToken;
   const oauthError = searchParams.get('error');
   const errorDesc = searchParams.get('error_description');
 

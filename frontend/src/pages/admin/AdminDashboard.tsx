@@ -66,6 +66,84 @@ function LangDistChart({ data }: { data: { language: string; count: number }[] }
   );
 }
 
+function RegistrationTrendChart({ data }: { data: { day: string; count: number }[] }) {
+  if (!data || data.length === 0) return null;
+  const maxVal = Math.max(...data.map(d => d.count), 1);
+  return (
+    <div className="chart-section">
+      <h2 className="admin-section-title">
+        <Users size={18} />
+        近14日注册趋势
+      </h2>
+      <div className="bar-chart">
+        {data.map((d) => (
+          <div key={d.day} className="bar-column">
+            <div className="bar-value">{d.count}</div>
+            <div className="bar-stack">
+              <div className="bar-fill bar-accepted" style={{ height: `${Math.max((d.count / maxVal) * 100, 1)}%` }} />
+            </div>
+            <div className="bar-label">{d.day.slice(5)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WeeklyACChart({ data }: { data: { week: string; count: number; accepted: number }[] }) {
+  if (!data || data.length === 0) return null;
+  const maxVal = Math.max(...data.map(d => d.count), 1);
+  return (
+    <div className="chart-section">
+      <h2 className="admin-section-title">
+        <Activity size={18} />
+        近8周提交趋势
+      </h2>
+      <div className="bar-chart">
+        {data.map((d) => {
+          const totalH = (d.count / maxVal) * 100;
+          const acH = (d.accepted / maxVal) * 100;
+          const label = d.week.slice(2); // YY-WW → WW
+          return (
+            <div key={d.week} className="bar-column">
+              <div className="bar-value">{d.count}</div>
+              <div className="bar-stack">
+                <div className="bar-fill bar-accepted" style={{ height: `${Math.max(acH, 1)}%` }} title={`AC: ${d.accepted}`} />
+                <div className="bar-fill bar-total" style={{ height: `${Math.max(totalH - acH, 0)}%` }} title={`Total: ${d.count}`} />
+              </div>
+              <div className="bar-label">{label}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ActiveUsersChart({ data }: { data: { day: string; count: number }[] }) {
+  if (!data || data.length === 0) return null;
+  const maxVal = Math.max(...data.map(d => d.count), 1);
+  return (
+    <div className="chart-section">
+      <h2 className="admin-section-title">
+        <Users size={18} />
+        近14日活跃用户
+      </h2>
+      <div className="bar-chart">
+        {data.map((d) => (
+          <div key={d.day} className="bar-column">
+            <div className="bar-value">{d.count}</div>
+            <div className="bar-stack">
+              <div className="bar-fill bar-accepted" style={{ height: `${Math.max((d.count / maxVal) * 100, 1)}%` }} />
+            </div>
+            <div className="bar-label">{d.day.slice(5)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { user } = useAuthStore();
   const perms = usePermissions();
@@ -186,12 +264,42 @@ export default function AdminDashboard() {
             <div className="stat-label">{t('admin.openTickets')}</div>
           </div>
         </div>
+        <div className="stat-card">
+          <div className="stat-icon-wrapper blue">
+            <Users size={24} />
+          </div>
+          <div className="stat-info">
+            <div className="stat-number">{stats?.active_users_24h ?? '-'}</div>
+            <div className="stat-label">{t('admin.activeUsers24h')}</div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon-wrapper purple">
+            <Users size={24} />
+          </div>
+          <div className="stat-info">
+            <div className="stat-number">{stats?.active_users_7d ?? '-'}</div>
+            <div className="stat-label">{t('admin.activeUsers7d')}</div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon-wrapper green">
+            <Users size={24} />
+          </div>
+          <div className="stat-info">
+            <div className="stat-number">{stats?.active_users_30d ?? '-'}</div>
+            <div className="stat-label">{t('admin.activeUsers30d')}</div>
+          </div>
+        </div>
       </div>
 
       {/* Charts row */}
       <div className="dashboard-charts">
         <DailyTrendChart data={stats?.daily_trend || []} />
         <LangDistChart data={stats?.language_distribution || []} />
+        <RegistrationTrendChart data={stats?.registration_trend || []} />
+        <WeeklyACChart data={stats?.weekly_trend || []} />
+        <ActiveUsersChart data={stats?.active_trend || []} />
       </div>
 
       {stats?.recent_submissions && stats.recent_submissions.length > 0 && (

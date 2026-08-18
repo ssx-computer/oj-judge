@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
 import { useToastStore } from '../store/toast';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { t } from '../i18n';
 import { Save, Settings, Bell, Code2 } from 'lucide-react';
 
 export default function UserSettings() {
@@ -107,13 +108,44 @@ export default function UserSettings() {
         </div>
 
         <div className="form-group">
+          <label>{t('userSettings.editorFontSize')}</label>
+          <select
+            className="form-input form-select"
+            value={settings.editor_font_size || '14'}
+            onChange={(e) => setSettings({ ...settings, editor_font_size: e.target.value })}
+          >
+            <option value="12">12px</option>
+            <option value="13">13px</option>
+            <option value="14">14px</option>
+            <option value="15">15px</option>
+            <option value="16">16px</option>
+            <option value="18">18px</option>
+          </select>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{t('userSettings.editorFontSizeHint')}</p>
+        </div>
+
+        <div className="form-group">
+          <label>{t('userSettings.customCss')}</label>
+          <textarea
+            className="form-input"
+            rows={6}
+            value={settings.custom_css || ''}
+            onChange={(e) => setSettings({ ...settings, custom_css: e.target.value })}
+            placeholder={t('userSettings.customCssPlaceholder')}
+            spellCheck={false}
+            style={{ fontFamily: 'monospace', fontSize: 12 }}
+          />
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{t('userSettings.customCssHint')}</p>
+        </div>
+
+        <div className="form-group">
           <label>默认代码语言</label>
           <select
             className="form-input form-select"
             value={settings.default_language || 'python'}
             onChange={(e) => setSettings({ ...settings, default_language: e.target.value })}
           >
-            <option value="python">Python 3</option>
+            <option value="python">Python</option>
             <option value="cpp">C++</option>
             <option value="java">Java</option>
             <option value="javascript">JavaScript</option>
@@ -121,6 +153,19 @@ export default function UserSettings() {
             <option value="go">Go</option>
             <option value="rust">Rust</option>
           </select>
+        </div>
+
+        <div className="form-group">
+          <label>{t('userSettings.title')}</label>
+          <input
+            type="text"
+            className="form-input"
+            value={settings.title || ''}
+            onChange={(e) => setSettings({ ...settings, title: e.target.value.slice(0, 30) })}
+            placeholder={t('userSettings.titlePlaceholder')}
+            maxLength={30}
+          />
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{t('userSettings.titleHint')}</p>
         </div>
 
         <div className="form-group">

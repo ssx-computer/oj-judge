@@ -39,6 +39,26 @@ notifications.get('/', authMiddleware, async (c) => {
   });
 });
 
+// GET /notifications/stream-token — 签发短时效 SSE 连接 token(5 分钟)
+// EventSource 无法携带 Authorization 头,token 只能走 URL 查询参数。
+// 使用短时效专用 token 而非主登录 JWT,避免长期有效的登录凭证出现在
+// 浏览器历史/代理日志中;过期后前端会重新获取或回退到轮询。
+notifications.get('/stream-token', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const { signJWT } = await import('../utils/jwt');
+  const token = await signJWT(
+    {
+      userId: user.userId,
+      username: user.username,
+      role: user.role,
+      permissions: user.permissions || [],
+    },
+    c.env.JWT_SECRET,
+    5 * 60 // 5 分钟
+  );
+  return c.json({ success: true, data: { token, expires_in: 300 } });
+});
+
 // ── SSE (Server-Sent Events) stream for real-time notifications ──
 // GET /notifications/stream?token=xxx — uses query param for auth (EventSource can't set headers)
 notifications.get('/stream', async (c) => {
@@ -48,7 +68,7 @@ notifications.get('/stream', async (c) => {
   }
 
   const { verifyJWT } = await import('../utils/jwt');
-  const payload = await verifyJWT(token, c.env.JWT_SECRET);
+  const payload = await verifyJWT(token, c.env.JWT_SECRET, (c.env as any).JWT_SECRET_PREVIOUS);
   if (!payload) {
     return c.json({ success: false, error: { message: 'Invalid token', code: 'UNAUTHORIZED' } }, 401);
   }
@@ -67,6 +87,7 @@ notifications.get('/stream', async (c) => {
   sse('connected', JSON.stringify({ status: 'ok', userId }));
 
   let lastCheck = Date.now();
+  let lastHeartbeat = Date.now();
 
   const pollTimer = setInterval(async () => {
     try {
@@ -79,10 +100,12 @@ notifications.get('/stream', async (c) => {
           "SELECT id, type, title, content, link, created_at FROM notifications WHERE user_id = ? AND is_read = 0 AND strftime('%s', created_at) * 1000 > ? ORDER BY created_at DESC LIMIT 5"
         ).bind(userId, lastCheck).all();
         sse('notification', JSON.stringify({ count: result.cnt, notifications: newNotifs.results || [] }));
-      }
-
-      if (Date.now() - lastCheck > 15000) {
+        // 有数据推送即视为活跃连接,重置心跳计时
+        lastHeartbeat = Date.now();
+      } else if (Date.now() - lastHeartbeat >= 15000) {
+        // 空闲超过 15 秒发送心跳,防止代理/负载均衡器断开空闲连接
         sse('heartbeat', JSON.stringify({ time: Date.now() }));
+        lastHeartbeat = Date.now();
       }
 
       lastCheck = Date.now();

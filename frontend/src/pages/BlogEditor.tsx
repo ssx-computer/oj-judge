@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { ArrowLeft } from 'lucide-react';
 import Captcha from '../components/Captcha';
 import type { CaptchaHandle } from '../components/Captcha';
+import MarkdownToolbar from '../components/MarkdownToolbar';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToastStore } from '../store/toast';
@@ -20,6 +21,8 @@ export default function BlogEditor() {
   const [captchaUuid, setCaptchaUuid] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const captchaRef = useRef<CaptchaHandle>(null);
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+  const submitBtnRef = useRef<HTMLButtonElement>(null);
   useDocumentTitle(blogId ? t('blogs.editBlog') : t('blogs.writeBlog'));
 
   const fetchBlog = useCallback(async () => {
@@ -94,12 +97,21 @@ export default function BlogEditor() {
         </label>
         <label>
           <span>{t('blogs.blogContent')}</span>
+          <MarkdownToolbar textareaRef={contentRef} value={form.content} onChange={(v) => setForm({ ...form, content: v })} />
           <textarea
+            ref={contentRef}
             rows={20}
             value={form.content}
             onChange={(e) => setForm({ ...form, content: e.target.value })}
             placeholder="支持 Markdown 语法..."
             required
+            onKeyDown={(e) => {
+              // 编辑器快捷键:Ctrl/Cmd + Enter 直接发布
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                submitBtnRef.current?.click();
+              }
+            }}
           />
         </label>
         <label>
@@ -129,6 +141,7 @@ export default function BlogEditor() {
             {t('blogs.saveDraft')}
           </button>
           <button
+            ref={submitBtnRef}
             type="submit"
             className="btn btn-primary"
             disabled={submitting}

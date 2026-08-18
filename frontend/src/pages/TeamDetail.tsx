@@ -16,6 +16,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAuthStore } from '../store/auth';
 import { useToastStore } from '../store/toast';
 import { useSettingsStore } from '../store/settings';
+import { formatContestTime } from '../utils/contestTime';
 import './Teams.css';
 
 type Tab = 'overview' | 'announcements' | 'discussions' | 'problemSets' | 'contests' | 'members' | 'rankings' | 'settings' | 'problems' | 'groups';

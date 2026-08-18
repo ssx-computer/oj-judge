@@ -52,6 +52,44 @@ admin.get('/stats', authMiddleware, adminMiddleware, async (c) => {
     ORDER BY count DESC
   `).all();
 
+  // Registration trend (last 14 days)
+  const registrationTrend = await c.env.DB.prepare(`
+    SELECT date(created_at) as day, COUNT(*) as count
+    FROM users
+    WHERE created_at >= date('now', '-14 days')
+    GROUP BY date(created_at)
+    ORDER BY day ASC
+  `).all();
+
+  // Weekly AC trend (last 8 weeks)
+  const weeklyTrend = await c.env.DB.prepare(`
+    SELECT strftime('%Y-%W', created_at) as week, COUNT(*) as count,
+           SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted
+    FROM submissions
+    WHERE created_at >= date('now', '-8 weeks')
+    GROUP BY week
+    ORDER BY week ASC
+  `).all();
+
+  // 活跃用户统计:近 24h / 7 天 / 30 天有提交或登录记录的用户数
+  const active24h = await c.env.DB.prepare(
+    "SELECT COUNT(DISTINCT user_id) as count FROM submissions WHERE created_at >= datetime('now', '-24 hours')"
+  ).first();
+  const active7d = await c.env.DB.prepare(
+    "SELECT COUNT(DISTINCT user_id) as count FROM submissions WHERE created_at >= datetime('now', '-7 days')"
+  ).first();
+  const active30d = await c.env.DB.prepare(
+    "SELECT COUNT(DISTINCT user_id) as count FROM submissions WHERE created_at >= datetime('now', '-30 days')"
+  ).first();
+
+  // 近 14 天活跃用户趋势(每日有提交的去重用户数)
+  const activeTrend = await c.env.DB.prepare(`
+    SELECT date(created_at) as day, COUNT(DISTINCT user_id) as count
+    FROM submissions
+    WHERE created_at >= date('now', '-14 days')
+    GROUP BY day ORDER BY day ASC
+  `).all();
+
   return c.json({
     success: true,
     data: {
@@ -67,6 +105,12 @@ admin.get('/stats', authMiddleware, adminMiddleware, async (c) => {
       recent_submissions: recentSubmissions.results,
       daily_trend: dailyTrend.results,
       language_distribution: langDist.results,
+      registration_trend: registrationTrend.results,
+      weekly_trend: weeklyTrend.results,
+      active_users_24h: (active24h as any)?.count || 0,
+      active_users_7d: (active7d as any)?.count || 0,
+      active_users_30d: (active30d as any)?.count || 0,
+      active_trend: activeTrend.results,
     },
   });
 });

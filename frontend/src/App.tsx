@@ -4,6 +4,10 @@ import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import { t } from './i18n';
 import { useAuthStore } from './store/auth';
+import { useSettingsStore } from './store/settings';
+import { useThemeStore } from './store/theme';
+import { api } from './api/client';
+import { applyThemeAccent, applyCustomCss } from './utils/theme';
 import './styles/global.css';
 import './styles/components.css';
 import 'katex/dist/katex.min.css';
@@ -71,6 +75,9 @@ const AdminBlogs = lazy(() => import('./pages/admin/AdminBlogs'));
 const AdminTeams = lazy(() => import('./pages/admin/AdminTeams'));
 const AdminMessages = lazy(() => import('./pages/admin/AdminMessages'));
 const AdminAds = lazy(() => import('./pages/admin/AdminAds'));
+const AdminAnnouncements = lazy(() => import('./pages/admin/AdminAnnouncements'));
+const AdminFriendLinks = lazy(() => import('./pages/admin/AdminFriendLinks'));
+const AdminCustomPages = lazy(() => import('./pages/admin/AdminCustomPages'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Contact = lazy(() => import('./pages/Contact'));
@@ -80,6 +87,12 @@ const Collections = lazy(() => import('./pages/Collections'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Templates = lazy(() => import('./pages/Templates'));
+const Announcements = lazy(() => import('./pages/Announcements'));
+const SearchPage = lazy(() => import('./pages/Search'));
+const WrongProblems = lazy(() => import('./pages/WrongProblems'));
+const ShareView = lazy(() => import('./pages/ShareView'));
+const AnnualReport = lazy(() => import('./pages/AnnualReport'));
+const CustomPage = lazy(() => import('./pages/CustomPage'));
 
 function App() {
   const { fetchUser, token } = useAuthStore();
@@ -89,6 +102,38 @@ function App() {
       fetchUser();
     }
   }, [token, fetchUser]);
+
+  // 主题定制:加载站点设置并应用管理端配置的主题色
+  useEffect(() => {
+    const applyTheme = async () => {
+      const store = useSettingsStore.getState();
+      if (!store.loaded) await store.fetchSettings();
+      applyThemeAccent(useSettingsStore.getState().settings.theme_accent);
+    };
+    applyTheme();
+  }, []);
+
+  // 用户级主题:登录后从 user_settings 恢复用户保存的深浅主题与自定义 CSS
+  useEffect(() => {
+    if (!token) return;
+    const applyServerTheme = async () => {
+      try {
+        const data = await api.getUserSettings();
+        const t = data.settings?.theme;
+        if (t === 'dark' || t === 'light') {
+          useThemeStore.getState().applyServerTheme(t);
+        }
+        // 用户自定义主题 CSS
+        const css = data.settings?.custom_css;
+        if (typeof css === 'string') {
+          applyCustomCss(css);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    applyServerTheme();
+  }, [token]);
 
   return (
     <BrowserRouter>
@@ -120,6 +165,9 @@ function App() {
               <Route path="tickets" element={<AdminTickets />} />
               <Route path="lists" element={<AdminLists />} />
               <Route path="announcement" element={<AdminAnnouncement />} />
+              <Route path="announcements" element={<AdminAnnouncements />} />
+              <Route path="friend-links" element={<AdminFriendLinks />} />
+              <Route path="custom-pages" element={<AdminCustomPages />} />
               <Route path="settings" element={<AdminSettings />} />
               <Route path="models" element={<AdminModels />} />
               <Route path="uploads" element={<AdminUploads />} />
@@ -180,6 +228,12 @@ function App() {
             <Route path="/collections" element={<Collections />} />
             <Route path="/collections/:id" element={<Collections />} />
             <Route path="/templates" element={<Templates />} />
+            <Route path="/announcements" element={<Announcements />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/wrong-problems" element={<WrongProblems />} />
+            <Route path="/shares/:token" element={<ShareView />} />
+            <Route path="/annual-report" element={<AnnualReport />} />
+            <Route path="/page/:slug" element={<CustomPage />} />
             <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

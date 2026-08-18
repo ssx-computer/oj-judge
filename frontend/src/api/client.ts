@@ -794,9 +794,14 @@ class ApiClient {
 
         return result.data;
       } catch (e: unknown) {
-        // Network errors: retry
+        // Network errors: retry. 浏览器断网时 fetch 抛 TypeError("Failed to fetch"),
+        // 因此不能只按字符串匹配,需同时识别 TypeError 与常见网络错误文案
         const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes('Network error') && attempt < MAX_RETRIES) {
+        const isNetworkError = e instanceof TypeError
+          || msg.includes('Network error')
+          || msg.includes('Failed to fetch')
+          || msg.includes('NetworkError');
+        if (isNetworkError && attempt < MAX_RETRIES) {
           await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
           continue;
         }
@@ -818,8 +823,35 @@ class ApiClient {
     return this.request<{ problems: ProblemListItem[]; pagination: Pagination }>(`/problems?${query.toString()}`);
   }
 
+  // 随机一题(可选 difficulty/tag 过滤)
+  async getRandomProblem(params?: { difficulty?: string; tag?: string }) {
+    const query = new URLSearchParams();
+    if (params?.difficulty) query.set('difficulty', params.difficulty);
+    if (params?.tag) query.set('tag', params.tag);
+    const qs = query.toString();
+    return this.request<{ problem: { id: number; title: string; slug: string; difficulty: string } }>(`/problems/random${qs ? `?${qs}` : ''}`);
+  }
+
+  // 每日一题(按日期确定性选题)
+  async getDailyProblem() {
+    return this.request<{ problem: { id: number; title: string; slug: string; difficulty: string; tags: string }; date: string }>('/problems/daily');
+  }
+
+  // 做题路线推荐(基于擅长标签的下一难度题)
+  async getProblemRoute(limit = 10) {
+    return this.request<{
+      routes: { id: number; title: string; slug: string; tags: string; difficulty: string; reason: string }[];
+      strong_tags: string[];
+    }>(`/problems/route?limit=${limit}`);
+  }
+
   async getProblemTags() {
     return this.request<{ tags: string[] }>('/problems/tags');
+  }
+
+  // 题目提交趋势(近 30 天每日提交/AC)
+  async getProblemTrend(slug: string) {
+    return this.request<{ trend: { day: string; total: number; accepted: number }[] }>(`/problems/${slug}/trend`);
   }
 
   // Tag categories tree
@@ -917,6 +949,14 @@ class ApiClient {
     return this.request<{ submission: Submission }>(`/submissions/${id}`);
   }
 
+  // 同一题目的历史提交列表(用于提交历史对比)
+  async getSubmissionHistory(id: number) {
+    return this.request<{
+      history: { id: number; language: string; status: string; score: number | null; time_used: number | null; memory_used: number | null; created_at: string }[];
+      problem_id: number;
+    }>(`/submissions/${id}/history`);
+  }
+
   async getSubmissionTestcases(id: number) {
     return this.request<{ testcases: SubmissionTestcase[] }>(`/submissions/${id}/testcases`);
   }
@@ -937,6 +977,87 @@ class ApiClient {
     return this.request<{ submission_id: number; status: string; message: string }>(`/submissions/${id}/rejudge`, {
       method: 'POST',
     });
+  }
+
+  // ── 自定义静态页面 ──
+  async getPages() {
+    return this.request<{ pages: { id: number; slug: string; title: string }[] }>('/pages');
+  }
+
+  async getPage(slug: string) {
+    return this.request<{ page: { id: number; slug: string; title: string; content: string; created_at: string; updated_at: string } }>(`/pages/${slug}`);
+  }
+
+  async getAdminPages() {
+    return this.request<{ pages: { id: number; slug: string; title: string; show_in_footer: number; enabled: number; created_at: string }[] }>('/pages/admin');
+  }
+
+  async createPage(data: Record<string, unknown>) {
+    return this.request<{ id: number; message: string }>('/pages', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updatePage(id: number, data: Record<string, unknown>) {
+    return this.request<{ message: string }>(`/pages/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deletePage(id: number) {
+    return this.request<{ message: string }>(`/pages/${id}`, { method: 'DELETE' });
+  }
+
+  // ── 友情链接 ──
+  async getFriendLinks() {
+    return this.request<{ links: { id: number; name: string; url: string; description: string; icon: string }[] }>('/friend-links');
+  }
+
+  async getAdminFriendLinks() {
+    return this.request<{ links: { id: number; name: string; url: string; description: string; icon: string; sort_order: number; enabled: number }[] }>('/friend-links/admin');
+  }
+
+  async createFriendLink(data: Record<string, unknown>) {
+    return this.request<{ id: number; message: string }>('/friend-links', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateFriendLink(id: number, data: Record<string, unknown>) {
+    return this.request<{ message: string }>(`/friend-links/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deleteFriendLink(id: number) {
+    return this.request<{ message: string }>(`/friend-links/${id}`, { method: 'DELETE' });
+  }
+
+  // ── 代码分享短链 ──
+  async createCodeShare(submission_id: number, title?: string, expires_in_hours?: number, password?: string) {
+    return this.request<{ token: string; url: string; expires_at: string | null }>('/shares', {
+      method: 'POST',
+      body: JSON.stringify({ submission_id, title, expires_in_hours: expires_in_hours || undefined, password: password || undefined }),
+    });
+  }
+
+  async getCodeShare(token: string, password?: string) {
+    const qs = password ? `?password=${encodeURIComponent(password)}` : '';
+    return this.request<{ share: { token: string; code: string; language: string; title: string; username: string; submission_id: number | null; created_at: string; expires_at: string | null }; requires_password?: boolean }>(`/shares/${token}${qs}`);
+  }
+
+  // 下载代码分享图片 PNG
+  async downloadShareImage(token: string): Promise<void> {
+    const url = `${this.baseUrl}/shares/${token}/image`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `share-${token}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  }
+
+  async deleteCodeShare(token: string) {
+    return this.request<{ message: string }>(`/shares/${token}`, { method: 'DELETE' });
   }
 
   async getMe() {
@@ -1178,6 +1299,53 @@ class ApiClient {
     });
   }
 
+  // 克隆比赛(admin):复制比赛字段与题目关联
+  async cloneContest(id: number) {
+    return this.request<{ id: number; title: string; message: string }>(`/contests/${id}/clone`, { method: 'POST' });
+  }
+
+  // 导出当前用户已报名比赛的 ICS 日历文件
+  async exportContestsIcs(): Promise<void> {
+    const token = this.getToken();
+    const url = `${this.baseUrl}/contests/ical`;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = 'my-contests.ics';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  }
+
+  // 生成并下载当前用户的比赛成绩证书 PNG
+  async downloadContestCertificate(contestId: number): Promise<void> {
+    const token = this.getToken();
+    const url = `${this.baseUrl}/contests/${contestId}/certificate`;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `certificate-${contestId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  }
+
   async updateContest(id: number, data: Record<string, unknown>) {
     return this.request<{ message: string }>(`/contests/${id}`, {
       method: 'PUT',
@@ -1206,16 +1374,49 @@ class ApiClient {
     if (page && pageSize) { params.set('page', String(page)); params.set('pageSize', String(pageSize)); }
     if (virtual) params.set('virtual', '1');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return this.request<{
-      rankings: ContestRanking[];
-      problems: ContestProblem[];
-      scoring_type?: string;
-      is_rated?: number;
-      rating_finalized?: number;
-      result_hidden?: number;
-      board_frozen?: number;
-      pagination?: { page: number; pageSize: number; total: number; totalPages: number };
-    }>(`/contests/${id}/rankings${qs}`);
+    return this.request<{ rankings: ContestRanking[]; problems: ContestProblem[]; scoring_type: string; is_rated?: number; rating_finalized?: number; result_hidden?: number; board_frozen?: number; pagination?: Pagination | null }>(`/contests/${id}/rankings${qs}`);
+  }
+
+  // 导出比赛排行榜 CSV(带 token 的下载请求)
+  async exportContestRankings(id: number, virtual?: boolean): Promise<void> {
+    const token = this.getToken();
+    const url = `${this.baseUrl}/contests/${id}/rankings/export${virtual ? '?virtual=1' : ''}`;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `contest-${id}-rankings.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  }
+
+  // 导出比赛排行榜长图 PNG
+  async exportContestRankingsImage(id: number): Promise<void> {
+    const token = this.getToken();
+    const url = `${this.baseUrl}/contests/${id}/rankings/image`;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `contest-${id}-rankings.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
   }
 
   async checkContestRegistration(id: number) {
@@ -1279,6 +1480,11 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  // 克隆题单到自己的题单
+  async cloneProblemList(id: number) {
+    return this.request<{ id: number; title: string; message: string }>(`/lists/${id}/clone`, { method: 'POST' });
   }
 
   async updateProblemList(id: number, data: Record<string, unknown>) {
@@ -1439,10 +1645,10 @@ class ApiClient {
     });
   }
 
-  async createDiscussionReply(discussionId: number, content: string) {
+  async createDiscussionReply(discussionId: number, content: string, parent_id?: number) {
     return this.request<{ message: string }>(`/discussions/${discussionId}/replies`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, parent_id: parent_id || undefined }),
     });
   }
 
@@ -1466,6 +1672,27 @@ class ApiClient {
     });
   }
 
+  // 导出当前用户全部数据(JSON 下载)
+  async exportUserData(): Promise<void> {
+    const token = this.getToken();
+    const url = `${this.baseUrl}/users/export`;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = 'my-data.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+  }
+
   // Settings
   async getSettings() {
     return this.request<Record<string, string>>('/settings');
@@ -1477,6 +1704,41 @@ class ApiClient {
 
   async getUserHeatmap() {
     return this.request<{ heatmap: Record<string, number> }>('/users/heatmap');
+  }
+
+  // 做题统计可视化(难度分布 + 每月 AC 趋势 + 提交状态)
+  async getUserStats() {
+    return this.request<{
+      difficulty: { difficulty: string; accepted: number; attempted: number }[];
+      monthly: { month: string; accepted: number; total: number }[];
+      status: { status: string; count: number }[];
+    }>('/users/stats');
+  }
+
+  // 错题本:最近一次提交未 AC 的题目
+  async getWrongProblems(params?: { page?: number; pageSize?: number }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.pageSize) query.set('pageSize', String(params.pageSize));
+    return this.request<{
+      problems: { id: number; title: string; slug: string; difficulty: string; tags: string; fail_count: number; last_submitted_at: string }[];
+      pagination: Pagination;
+    }>(`/users/wrong-problems?${query.toString()}`);
+  }
+
+  // 年度做题报告
+  async getAnnualReport(year?: number) {
+    const qs = year ? `?year=${year}` : '';
+    return this.request<{
+      year: number;
+      total_submissions: number;
+      accepted: number;
+      solved_problems: number;
+      practice_days: number;
+      longest_streak: number;
+      top_tags: { tag: string; count: number }[];
+      monthly: { month: string; total: number; accepted: number }[];
+    }>(`/users/annual-report${qs}`);
   }
 
   async getUserLanguageStats() {
@@ -1635,6 +1897,32 @@ class ApiClient {
       logs: AuditLog[];
       pagination: Pagination;
     }>(`/audit/logs?${query.toString()}`);
+  }
+
+  // 导出全部审计日志 CSV(与 /logs 相同过滤条件,admin)
+  async exportAuditLogsCsv(params: { search?: string; action?: string; ip?: string } = {}): Promise<void> {
+    const token = this.getToken();
+    const query = new URLSearchParams();
+    if (params.search) query.set('search', params.search);
+    if (params.action) query.set('action', params.action);
+    if (params.ip) query.set('ip', params.ip);
+    const qs = query.toString();
+    const url = `${this.baseUrl}/audit/logs/export${qs ? `?${qs}` : ''}`;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = 'audit-logs.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
   }
 
   // ── Banned IPs ──
@@ -1846,12 +2134,57 @@ class ApiClient {
     });
   }
 
+  // 管理员定向/群发站内信(target_user_id 缺省 = 群发所有用户)
+  async sendAdminMessage(content: string, target_user_id?: number) {
+    return this.request<{ sent: number; conversation_id?: number; message: string }>('/messages/admin/send', {
+      method: 'POST',
+      body: JSON.stringify({ content, target_user_id: target_user_id || undefined }),
+    });
+  }
+
   async markConversationRead(id: number) {
     return this.request<{ message: string }>(`/messages/conversations/${id}/read`, { method: 'POST' });
   }
 
   async getUnreadMessagesCount() {
     return this.request<{ count: number }>('/messages/unread-count');
+  }
+
+  // 获取短时效 SSE 连接 token(5 分钟有效),避免长期有效的登录 JWT 出现在 URL 查询参数中
+  async getSSEStreamToken() {
+    return this.request<{ token: string; expires_in: number }>('/notifications/stream-token');
+  }
+
+  // 公告中心
+  async getAnnouncements(params?: { page?: number; pageSize?: number; search?: string }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.pageSize) query.set('pageSize', String(params.pageSize));
+    if (params?.search) query.set('search', params.search);
+    return this.request<{ announcements: { id: number; title: string; content: string; is_pinned: number; created_at: string; updated_at: string; author?: string }[]; pagination: Pagination }>(`/announcements?${query.toString()}`);
+  }
+
+  async getAnnouncement(id: number) {
+    return this.request<{ announcement: { id: number; title: string; content: string; is_pinned: number; created_at: string; updated_at: string; author?: string } }>(`/announcements/${id}`);
+  }
+
+  async createAnnouncement(data: { title: string; content: string; is_pinned?: boolean }) {
+    return this.request<{ id: number; message: string }>('/announcements', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateAnnouncement(id: number, data: Record<string, unknown>) {
+    return this.request<{ message: string }>(`/announcements/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deleteAnnouncement(id: number) {
+    return this.request<{ message: string }>(`/announcements/${id}`, { method: 'DELETE' });
+  }
+
+  async getAdminAnnouncements(params?: { page?: number; pageSize?: number }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.pageSize) query.set('pageSize', String(params.pageSize));
+    return this.request<{ announcements: { id: number; title: string; is_pinned: number; status: string; created_at: string; updated_at: string; author?: string }[]; pagination: Pagination }>(`/announcements/admin/list?${query.toString()}`);
   }
 
   // Teams
@@ -2134,12 +2467,13 @@ class ApiClient {
   }
 
   // Blogs
-  async getBlogs(params?: { page?: number; pageSize?: number; sort?: string; tag?: string }) {
+  async getBlogs(params?: { page?: number; pageSize?: number; sort?: string; tag?: string; mine?: boolean }) {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.sort) query.set('sort', params.sort);
     if (params?.tag) query.set('tag', params.tag);
+    if (params?.mine) query.set('mine', '1');
     return this.request<{ blogs: Blog[]; pagination: Pagination }>(`/blogs?${query.toString()}`);
   }
 
@@ -2177,11 +2511,21 @@ class ApiClient {
     return this.request<{ comments: BlogComment[]; pagination: Pagination }>(`/blogs/${id}/comments?${query.toString()}`);
   }
 
-  async postBlogComment(id: number, content: string) {
+  async postBlogComment(id: number, content: string, parent_id?: number) {
     return this.request<{ id: number; message: string }>(`/blogs/${id}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, parent_id: parent_id || undefined }),
     });
+  }
+
+  // 博客评论点赞/取消
+  async toggleBlogCommentLike(commentId: number) {
+    return this.request<{ liked: boolean; message: string }>(`/blogs/comments/${commentId}/like`, { method: 'POST' });
+  }
+
+  // 讨论回复点赞/取消
+  async toggleDiscussionReplyLike(discussionId: number, replyId: number) {
+    return this.request<{ liked: boolean; message: string }>(`/discussions/${discussionId}/replies/${replyId}/like`, { method: 'POST' });
   }
 
   // Solution review

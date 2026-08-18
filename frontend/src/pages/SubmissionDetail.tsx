@@ -6,7 +6,7 @@ import { useToastStore } from '../store/toast';
 import StatusBadge from '../components/StatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
-import { ChevronRight, Clock, MemoryStick, Code2, ChevronDown, ChevronUp, FileQuestion, RefreshCw, AlertCircle, RotateCcw, Terminal } from 'lucide-react';
+import { ChevronRight, Clock, MemoryStick, Code2, ChevronDown, ChevronUp, FileQuestion, RefreshCw, AlertCircle, RotateCcw, Terminal, Share2, History, GitCompare } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 import { cpp } from '@codemirror/lang-cpp';
@@ -14,6 +14,7 @@ import { java } from '@codemirror/lang-java';
 import { javascript } from '@codemirror/lang-javascript';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useThemeStore } from '../store/theme';
+import { useSettingsStore } from '../store/settings';
 import { t } from '../i18n';
 import './SubmissionDetail.css';
 
@@ -31,6 +32,7 @@ export default function SubmissionDetail() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
+  const settings = useSettingsStore((s) => s.settings);
   const addToast = useToastStore((s) => s.addToast);
   const [submission, setSubmission] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -40,6 +42,7 @@ export default function SubmissionDetail() {
   const [testcases, setTestcases] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [history, setHistory] = useState<{ id: number; language: string; status: string; score: number | null; created_at: string }[]>([]);
 
   // Polling cleanup refs (Bug 2 fix)
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,6 +105,14 @@ export default function SubmissionDetail() {
     fetchSubmission();
   }, [fetchSubmission]);
 
+  // 拉取同题历史提交(用于「提交历史对比」面板)
+  useEffect(() => {
+    if (!id) return;
+    api.getSubmissionHistory(parseInt(id))
+      .then((d) => { if (isMountedRef.current) setHistory(d.history || []); })
+      .catch(() => { /* ignore */ });
+  }, [id]);
+
   const toggleTestCase = (index: number) => {
     setExpandedTestCases(prev =>
       prev.includes(index)
@@ -120,6 +131,26 @@ export default function SubmissionDetail() {
       addToast('error', t('submissionDetail.rejudgeFailed'));
     } finally {
       setRejudging(false);
+    }
+  };
+
+  // 创建代码分享短链并复制链接
+  const [sharing, setSharing] = useState(false);
+  const handleShare = async () => {
+    if (!submission || sharing) return;
+    setSharing(true);
+    try {
+      const result = await api.createCodeShare(submission.id, undefined, 24);
+      const url = `${window.location.origin}/shares/${result.token}`;
+      navigator.clipboard?.writeText(url).then(() => {
+        addToast('success', t('submissionDetail.shareCopied'));
+      }).catch(() => {
+        addToast('success', url);
+      });
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -178,6 +209,11 @@ export default function SubmissionDetail() {
               <RotateCcw size={14} /> {rejudging ? t('submissionDetail.rejudging') : t('submissionDetail.rejudge')}
             </button>
           )}
+          {user && submission.user_id === user.id && (
+            <button className="btn btn-secondary btn-sm" onClick={handleShare} disabled={sharing}>
+              <Share2 size={14} /> {sharing ? t('common.loading') : t('submissionDetail.share')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -217,6 +253,47 @@ export default function SubmissionDetail() {
           <span>{new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(submission.created_at))}</span>
         </div>
       </div>
+
+      {/* 提交历史对比 */}
+      {history.length > 1 && (
+        <div className="submission-history">
+          <h2><History size={18} /> {t('submissionDetail.history')}</h2>
+          <div className="history-table">
+            <div className="history-row history-header">
+              <span className="hist-col-id">#</span>
+              <span className="hist-col-status">{t('submissionDetail.status')}</span>
+              <span className="hist-col-score">{t('submissionDetail.score')}</span>
+              <span className="hist-col-lang">{t('submissionDetail.language')}</span>
+              <span className="hist-col-time">{t('submissionDetail.submitted')}</span>
+              <span className="hist-col-action">{t('submissionDetail.historyCompare')}</span>
+            </div>
+            {history.map((h) => {
+              const isCurrent = h.id === submission.id;
+              return (
+                <div key={h.id} className={`history-row ${isCurrent ? 'current' : ''}`}>
+                  <span className="hist-col-id">
+                    {isCurrent ? <strong>#{h.id}</strong> : <Link to={`/submissions/${h.id}`}>#{h.id}</Link>}
+                    {isCurrent && <span className="history-current-badge">{t('submissionDetail.historyCurrent')}</span>}
+                  </span>
+                  <span className="hist-col-status">
+                    <StatusBadge status={h.status} />
+                  </span>
+                  <span className="hist-col-score">{h.score ?? '-'}</span>
+                  <span className="hist-col-lang">{h.language}</span>
+                  <span className="hist-col-time">{new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(h.created_at))}</span>
+                  <span className="hist-col-action">
+                    {!isCurrent && (
+                      <Link to={`/submissions/compare/${h.id}/${submission.id}`} className="btn-text-sm" title={t('submissionDetail.historyCompare')}>
+                        <GitCompare size={13} /> {t('submissionDetail.historyCompare')}
+                      </Link>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Testcase Results Table */}
       {!isStillPolling && testcases.length > 0 && (
@@ -363,6 +440,7 @@ export default function SubmissionDetail() {
             theme={theme === 'dark' ? oneDark : undefined}
             extensions={[getLangExtension(submission.language)]}
             readOnly={true}
+            style={{ fontSize: `${settings.editor_font_size || 14}px` }}
             basicSetup={{ lineNumbers: true, foldGutter: false }}
           />
         </div>

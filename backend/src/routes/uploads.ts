@@ -1,11 +1,41 @@
 import { Hono } from 'hono';
 import { AppType } from '../types';
 import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth';
+import { fetchWithTimeout } from '../utils/fetch-timeout';
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const SAFE_FILENAME_RE = /[^a-zA-Z0-9._-]/g;
+
+// 通用文件上传白名单:扩展名 -> 允许的 MIME 类型(以服务端映射为准,不信任客户端声明)
+const ALLOWED_FILE_EXTENSIONS: Record<string, string[]> = {
+  pdf: ['application/pdf'],
+  zip: ['application/zip', 'application/x-zip-compressed'],
+  txt: ['text/plain'],
+  md: ['text/markdown', 'text/plain'],
+  doc: ['application/msword'],
+  docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  xls: ['application/vnd.ms-excel'],
+  xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ppt: ['application/vnd.ms-powerpoint'],
+  pptx: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  csv: ['text/csv', 'text/plain'],
+  json: ['application/json'],
+  cpp: ['text/plain'],
+  c: ['text/plain'],
+  py: ['text/plain'],
+  java: ['text/plain'],
+  js: ['text/plain'],
+  ts: ['text/plain'],
+  go: ['text/plain'],
+  rs: ['text/plain'],
+};
+
+// 下载时安全的内联类型(仅图片);其余一律 attachment,防止存储型 XSS
+function isInlineSafeMime(mime: string): boolean {
+  return ALLOWED_IMAGE_TYPES.includes(mime);
+}
 
 // 校验图片文件真实内容(magic bytes),防止伪造 MIME 上传非图片/SVG 脚本
 function verifyImageSignature(buffer: ArrayBuffer): boolean {
@@ -111,7 +141,7 @@ uploads.post('/image', authMiddleware, async (c) => {
   const arrayBuffer = await file.arrayBuffer();
   const content = encodeBase64(arrayBuffer);
 
-  const githubResponse = await fetch(
+  const githubResponse = await fetchWithTimeout(
     `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${githubPath}`,
     {
       method: 'PUT',
@@ -186,8 +216,25 @@ uploads.post('/file', authMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'File too large (max 20MB)', code: 'BAD_REQUEST' } }, 400);
   }
 
+  // 扩展名 + MIME 白名单校验(双重要求),拒绝 HTML/SVG/脚本等可执行内容,
+  // 防止存储型 XSS;存储的 mime 以服务端映射为准,不信任客户端声明
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const allowedMimes = ALLOWED_FILE_EXTENSIONS[ext];
+  if (!allowedMimes) {
+    return c.json({
+      success: false,
+      error: {
+        message: `Invalid file type. Allowed extensions: ${Object.keys(ALLOWED_FILE_EXTENSIONS).join(', ')}`,
+        code: 'BAD_REQUEST',
+      },
+    }, 400);
+  }
+  if (!allowedMimes.includes(file.type)) {
+    return c.json({ success: false, error: { message: 'File content type does not match its extension', code: 'BAD_REQUEST' } }, 400);
+  }
+  const storedMime = allowedMimes[0];
+
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const ext = file.name.split('.').pop() || 'bin';
   const filename = `${dateStr}_${user.userId}.${ext}`;
   const githubPath = `uploads/file/${user.userId}/${filename}`;
 
@@ -195,7 +242,7 @@ uploads.post('/file', authMiddleware, async (c) => {
   const arrayBuffer = await file.arrayBuffer();
   const content = encodeBase64(arrayBuffer);
 
-  const githubResponse = await fetch(
+  const githubResponse = await fetchWithTimeout(
     `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${githubPath}`,
     {
       method: 'PUT',
@@ -220,7 +267,7 @@ uploads.post('/file', authMiddleware, async (c) => {
 
   const result = await c.env.DB.prepare(
     'INSERT INTO uploads (user_id, filename, original_name, file_type, mime_type, size_bytes, github_path, is_public) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(user.userId, filename, file.name, 'file', file.type, file.size, githubPath, isPublic).run();
+  ).bind(user.userId, filename, file.name, 'file', storedMime, file.size, githubPath, isPublic).run();
 
   const uploadId = result.meta.last_row_id;
 
@@ -320,7 +367,7 @@ uploads.get('/download/:id', optionalAuthMiddleware, async (c) => {
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${upload.github_path}`,
       {
         headers: {
@@ -336,9 +383,14 @@ uploads.get('/download/:id', optionalAuthMiddleware, async (c) => {
     }
 
     const data = await response.arrayBuffer();
-    c.header('Content-Type', upload.mime_type || 'application/octet-stream');
+    const mime = upload.mime_type || 'application/octet-stream';
+    c.header('Content-Type', mime);
     c.header('Cache-Control', 'public, max-age=86400');
-    c.header('Content-Disposition', `inline; filename="${escapeContentDispositionFilename(upload.original_name)}"`);
+    // 仅「图片类型且 MIME 在白名单内」允许内联展示;其余一律 attachment 下载,
+    // 防止上传 HTML/SVG 等被同源内联解析造成存储型 XSS
+    const inline = upload.file_type === 'image' && isInlineSafeMime(mime);
+    const disposition = inline ? 'inline' : 'attachment';
+    c.header('Content-Disposition', `${disposition}; filename="${escapeContentDispositionFilename(upload.original_name)}"`);
     return c.body(data);
   } catch (e) {
     console.error('GitHub download failed:', e);
@@ -363,7 +415,7 @@ uploads.delete('/:id', authMiddleware, async (c) => {
 
   // Delete from GitHub
   try {
-    const currentFile = await fetch(
+    const currentFile = await fetchWithTimeout(
       `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${upload.github_path}`,
       {
         headers: {
@@ -376,7 +428,7 @@ uploads.delete('/:id', authMiddleware, async (c) => {
 
     if (currentFile.ok) {
       const fileData = await currentFile.json() as any;
-      await fetch(
+      await fetchWithTimeout(
         `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${upload.github_path}`,
         {
           method: 'DELETE',
@@ -436,7 +488,7 @@ uploads.post('/avatar', authMiddleware, async (c) => {
 
   // Save to GitHub (same as image upload)
   try {
-    const githubResponse = await fetch(
+    const githubResponse = await fetchWithTimeout(
       `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${filename}`,
       {
         method: 'PUT',

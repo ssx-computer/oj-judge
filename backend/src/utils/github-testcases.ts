@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './fetch-timeout';
+
 interface Testcase {
   input: string;
   expected_output: string;
@@ -12,7 +14,7 @@ interface Env {
 
 export async function fetchTestcases(env: Env, slug: string): Promise<Testcase[]> {
   const filePath = `testcases/${slug}.json`;
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       headers: {
@@ -43,7 +45,7 @@ export async function saveTestcases(env: Env, slug: string, testcases: Testcase[
   const encodedContent = btoa(content);
 
   // Get current file SHA for update (required by GitHub API)
-  const currentFile = await fetch(
+  const currentFile = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       headers: {
@@ -68,7 +70,7 @@ export async function saveTestcases(env: Env, slug: string, testcases: Testcase[
     body.sha = sha;
   }
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       method: 'PUT',
@@ -95,7 +97,7 @@ export async function deleteTestcases(env: Env, slug: string): Promise<boolean> 
   const filePath = `testcases/${slug}.json`;
 
   // Get current file SHA (required for delete)
-  const currentFile = await fetch(
+  const currentFile = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       headers: {
@@ -114,7 +116,7 @@ export async function deleteTestcases(env: Env, slug: string): Promise<boolean> 
   const fileData = await currentFile.json() as any;
   const sha = fileData.sha;
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       method: 'DELETE',

@@ -10,6 +10,49 @@ interface ImageUploadButtonProps {
   onInsert: (markdown: string) => void;
 }
 
+// 超过该尺寸/大小的图片在客户端压缩后再上传(节省存储与带宽)
+const MAX_DIMENSION = 1920;   // 最长边像素
+const MAX_SIZE_BYTES = 800 * 1024; // 超过 800KB 才压缩
+const JPEG_QUALITY = 0.82;
+
+/**
+ * 用 canvas 压缩图片:等比缩放到 MAX_DIMENSION 内,导出 JPEG。
+ * GIF 跳过压缩(保持动画),小图直接返回原文件。
+ */
+async function compressImage(file: File): Promise<File> {
+  if (file.type === 'image/gif' || file.size <= MAX_SIZE_BYTES) {
+    return file;
+  }
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const { width, height } = bitmap;
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(width, height));
+    const tw = Math.max(1, Math.round(width * scale));
+    const th = Math.max(1, Math.round(height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = tw;
+    canvas.height = th;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, tw, th);
+    bitmap.close();
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
+    );
+    if (!blob || blob.size >= file.size) {
+      return file; // 压缩无收益时退回原文件
+    }
+
+    const name = file.name.replace(/\.(png|webp)$/i, '.jpg');
+    return new File([blob], name, { type: 'image/jpeg' });
+  } catch {
+    return file; // 压缩失败不影响上传
+  }
+}
+
 export default function ImageUploadButton({ onInsert }: ImageUploadButtonProps) {
   const addToast = useToastStore((s) => s.addToast);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -28,7 +71,8 @@ export default function ImageUploadButton({ onInsert }: ImageUploadButtonProps) 
 
     setUploading(true);
     try {
-      const result = await api.uploadImage(file);
+      const toUpload = await compressImage(file);
+      const result = await api.uploadImage(toUpload);
       const markdown = `![${result.original_name}](${result.url})`;
       onInsert(markdown);
       addToast('success', t('common.uploadSuccess'));

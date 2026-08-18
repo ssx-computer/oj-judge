@@ -31,6 +31,11 @@ import search from './routes/search';
 import templates from './routes/templates';
 import userSettings from './routes/userSettings';
 import collections from './routes/collections';
+import announcements from './routes/announcements';
+import rss from './routes/rss';
+import codeShares from './routes/codeShares';
+import friendLinks from './routes/friendLinks';
+import customPages from './routes/customPages';
 import { seedDatabase } from './seed';
 import { auditMiddleware, banCheckMiddleware } from './middleware/audit';
 
@@ -104,12 +109,30 @@ app.onError((err, c) => {
       }
     }, 400);
   }
-  console.error('Server error:', err);
+
+  // 生成 trace_id 便于日志关联排查(不向客户端暴露内部错误细节)
+  const traceId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  // 结构化日志:生产环境也可据此接入 Sentry 等监控,避免依赖堆栈文本
+  console.error(JSON.stringify({
+    level: 'error',
+    trace_id: traceId,
+    timestamp: new Date().toISOString(),
+    method: c.req.method,
+    path: c.req.path,
+    message: err.message,
+    stack: err.stack,
+  }));
+
   return c.json({
     success: false,
     error: {
-      message: err.message || 'An internal server error occurred',
-      code: 'INTERNAL_ERROR'
+      message: 'An internal server error occurred',
+      code: 'INTERNAL_ERROR',
+      trace_id: traceId,
     }
   }, 500);
 });
@@ -165,10 +188,80 @@ api.route('/search', search);
 api.route('/templates', templates);
 api.route('/user/settings', userSettings);
 api.route('/collections', collections);
+api.route('/announcements', announcements);
+api.route('/rss', rss);
+api.route('/shares', codeShares);
+api.route('/friend-links', friendLinks);
+api.route('/pages', customPages);
 
 app.route('/api/v1', api);
 
+// GET /sitemap.xml — SEO sitemap(自动使用当前请求域名生成,便于收录题目/博客/题解/讨论/公告页)
+app.get('/sitemap.xml', async (c) => {
+  const origin = new URL(c.req.url).origin;
+
+  const staticUrls = [
+    '', '/problems', '/matches', '/lists', '/blogs', '/discussions',
+    '/announcements', '/rankings', '/solutions/all', '/search',
+  ];
+
+  const [problems, blogs, solutions, discussions, announcements] = await Promise.all([
+    c.env.DB.prepare("SELECT slug FROM problems WHERE is_public = 1 ORDER BY id DESC LIMIT 500").all(),
+    c.env.DB.prepare("SELECT id FROM blogs WHERE status = 'published' ORDER BY id DESC LIMIT 500").all(),
+    c.env.DB.prepare("SELECT id FROM solutions WHERE review_status = 'approved' ORDER BY id DESC LIMIT 500").all(),
+    c.env.DB.prepare("SELECT id FROM discussions ORDER BY id DESC LIMIT 500").all(),
+    c.env.DB.prepare("SELECT id FROM site_announcements WHERE status = 'published' ORDER BY id DESC LIMIT 200").all(),
+  ]);
+
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const url = (loc: string) =>
+    `  <url>\n    <loc>${esc(origin + loc)}</loc>\n  </url>`;
+
+  const lines: string[] = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+  ];
+  for (const p of staticUrls) lines.push(url(p));
+  for (const r of (problems.results as any[])) lines.push(url(`/problems/${r.slug}`));
+  for (const r of (blogs.results as any[])) lines.push(url(`/blogs/${r.id}`));
+  for (const r of (solutions.results as any[])) lines.push(url(`/solutions/${r.id}`));
+  for (const r of (discussions.results as any[])) lines.push(url(`/discussions/${r.id}`));
+  for (const r of (announcements.results as any[])) lines.push(url(`/announcements`));
+  lines.push('</urlset>');
+
+  c.header('Content-Type', 'application/xml; charset=utf-8');
+  c.header('Cache-Control', 'public, max-age=3600');
+  return c.body(lines.join('\n'));
+});
+
+// GET /robots.txt — 搜索引擎爬虫规则
+app.get('/robots.txt', async (c) => {
+  const origin = new URL(c.req.url).origin;
+  const text = [
+    'User-agent: *',
+    'Allow: /',
+    'Disallow: /api/',
+    'Disallow: /admin',
+    'Disallow: /__dev_info',
+    'Disallow: /__seed',
+    '',
+    `Sitemap: ${origin}/sitemap.xml`,
+  ].join('\n');
+  c.header('Content-Type', 'text/plain; charset=utf-8');
+  c.header('Cache-Control', 'public, max-age=3600');
+  return c.body(text);
+});
+
 app.get('/__dev_info', async (c) => {
+  // 仅本地开发可用:生产环境返回 404,避免泄露服务器文件系统路径/目录探测信息
+  try {
+    const url = new URL(c.req.url);
+    if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+      return c.json({ success: false, error: { message: 'Resource not found', code: 'NOT_FOUND' } }, 404);
+    }
+  } catch {
+    return c.json({ success: false, error: { message: 'Resource not found', code: 'NOT_FOUND' } }, 404);
+  }
   const info: any = { hasProcess: typeof process !== 'undefined' };
   if (typeof process !== 'undefined') {
     try {

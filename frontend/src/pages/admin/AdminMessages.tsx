@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { t } from '../../i18n';
-import { Search, Trash2, ChevronLeft, ChevronRight, X, MessageSquare, Eye } from 'lucide-react';
+import { Search, Trash2, ChevronLeft, ChevronRight, X, MessageSquare, Eye, Send } from 'lucide-react';
 import '../Admin.css';
 
 export default function AdminMessages() {
@@ -23,6 +23,32 @@ export default function AdminMessages() {
   const [msgPagination, setMsgPagination] = useState<any>(null);
   const [msgPage, setMsgPage] = useState(1);
   const [loadingMessages, setLoadingMessages] = useState(false);
+
+  // 定向/群发站内信
+  const [broadcastTarget, setBroadcastTarget] = useState('');
+  const [broadcastContent, setBroadcastContent] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleBroadcast = async () => {
+    if (!broadcastContent.trim() || sending) return;
+    setSending(true);
+    try {
+      const targetId = broadcastTarget.trim() ? parseInt(broadcastTarget.trim()) : undefined;
+      if (broadcastTarget.trim() && (!targetId || targetId <= 0)) {
+        addToast('error', t('admin.broadcastTargetInvalid'));
+        setSending(false);
+        return;
+      }
+      const result = await api.sendAdminMessage(broadcastContent.trim(), targetId);
+      addToast('success', targetId ? t('admin.broadcastSentTargeted') : t('admin.broadcastSentAll').replace('{0}', String(result.sent)));
+      setBroadcastContent('');
+      setBroadcastTarget('');
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSending(false);
+    }
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 400);
@@ -120,6 +146,42 @@ export default function AdminMessages() {
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           />
+        </div>
+      </div>
+
+      {/* 管理员定向/群发站内信 */}
+      <div className="admin-card" style={{ marginBottom: 16, padding: 16 }}>
+        <h3 style={{ margin: '0 0 10px', fontSize: 14 }}>
+          <Send size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+          {t('admin.broadcastTitle')}
+        </h3>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            type="number"
+            placeholder={t('admin.broadcastTargetPlaceholder')}
+            value={broadcastTarget}
+            onChange={(e) => setBroadcastTarget(e.target.value)}
+            style={{ width: 160 }}
+            min={1}
+          />
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t('admin.broadcastTargetHint')}</span>
+        </div>
+        <textarea
+          rows={3}
+          placeholder={t('admin.broadcastContentPlaceholder')}
+          value={broadcastContent}
+          onChange={(e) => setBroadcastContent(e.target.value)}
+          style={{ marginTop: 10 }}
+        />
+        <div style={{ marginTop: 10 }}>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={handleBroadcast}
+            disabled={sending || !broadcastContent.trim()}
+          >
+            <Send size={14} />
+            {sending ? t('common.submitting') : t('admin.broadcastSend')}
+          </button>
         </div>
       </div>
 

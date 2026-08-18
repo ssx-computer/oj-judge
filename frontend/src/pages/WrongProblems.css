@@ -1,0 +1,84 @@
+.wrong-problems-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.wrong-problems-page .page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.wrong-problems-page .page-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  margin: 0;
+}
+
+.wrong-problem-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wrong-problem-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 10px;
+}
+
+.wrong-problem-card:hover {
+  border-color: var(--accent, #4f6ef7);
+}
+
+.wrong-problem-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.wrong-problem-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.wrong-problem-title a {
+  color: var(--text-primary, #333);
+  text-decoration: none;
+}
+
+.wrong-problem-title a:hover {
+  color: var(--accent, #4f6ef7);
+}
+
+.wrong-problem-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+
+.fail-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #f85149;
+}
+
+.last-time {
+  font-size: 12px;
+  color: var(--text-muted, #aaa);
+}

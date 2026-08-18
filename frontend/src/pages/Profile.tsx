@@ -11,7 +11,7 @@ import { DIFFICULTY_COLORS } from '../constants';
 import RatingBadge from '../components/RatingBadge';
 import { getRatingColor, getRatingTier } from '../utils/rating';
 import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
-import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, Mail, Users, TrendingUp, Award } from 'lucide-react';
+import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, Mail, Users, TrendingUp, Award, Download, Tag } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import FollowButton from '../components/FollowButton';
@@ -29,6 +29,7 @@ export default function Profile() {
   const [languageStats, setLanguageStats] = useState<{ language: string; total: number; accepted: number }[]>([]);
   const [contests, setContests] = useState<any[]>([]);
   const [heatmap, setHeatmap] = useState<Record<string, number>>({});
+  const [analysisStats, setAnalysisStats] = useState<{ difficulty: any[]; monthly: any[]; status: any[] } | null>(null);
   const [ratingHistory, setRatingHistory] = useState<any[]>([]);
   const [ratingInfo, setRatingInfo] = useState<{ rating: number; max_rating: number } | null>(null);
   const [achievements, setAchievements] = useState<any[]>([]);
@@ -86,6 +87,12 @@ export default function Profile() {
         try {
           const heatmapData = await api.getUserHeatmap();
           setHeatmap(heatmapData.heatmap);
+        } catch {
+          // ignore
+        }
+        try {
+          const statsData = await api.getUserStats();
+          setAnalysisStats(statsData);
         } catch {
           // ignore
         }
@@ -190,6 +197,16 @@ export default function Profile() {
     }
   };
 
+  // 导出用户全部数据
+  const handleExportData = async () => {
+    try {
+      await api.exportUserData();
+      addToast('success', t('profile.exportDone'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
   return (
     <div className="profile-page">
       <div className="profile-header">
@@ -203,6 +220,14 @@ export default function Profile() {
               <Key size={14} />
               {t('profile.changePassword')}
             </button>
+            <button className="btn btn-secondary btn-sm" onClick={handleExportData} title={t('profile.exportData')}>
+              <Download size={14} />
+              {t('profile.exportData')}
+            </button>
+            <Link to="/annual-report" className="btn btn-secondary btn-sm" title={t('annualReport.title')}>
+              <TrendingUp size={14} />
+              {t('annualReport.title')}
+            </Link>
           </div>
         )}
         {!isOwnProfile && currentUser && profileUser && (
@@ -296,6 +321,9 @@ export default function Profile() {
             )}
             <div className="profile-text">
               <h1 className="profile-username" style={user.rating && user.rating >= 800 ? { color: getRatingColor(user.rating) } : undefined}>{user.username}</h1>
+              {user.title && (
+                <div className="profile-title-badge" title={t('profile.titleBadge')}>{user.title}</div>
+              )}
               {user.rating && user.rating >= 800 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                   <RatingBadge rating={user.rating} showLabel={false} size="md" />
@@ -590,6 +618,89 @@ export default function Profile() {
                   );
                 });
             })()}
+          </div>
+        </div>
+      )}
+
+      {analysisStats && analysisStats.difficulty.length > 0 && (
+        <div className="stats-visualization">
+          <h2 className="section-title">{t('profile.difficultyStats')}</h2>
+          <div className="language-bars">
+            {analysisStats.difficulty.map((d: any) => {
+              const pct = d.attempted > 0 ? Math.round((d.accepted / d.attempted) * 100) : 0;
+              return (
+                <div key={d.difficulty} className="language-bar-item">
+                  <div className="language-bar-header">
+                    <span className="language-bar-label">{d.difficulty}</span>
+                    <span className="language-bar-count">
+                      {d.accepted}/{d.attempted} AC ({pct}%)
+                    </span>
+                  </div>
+                  <div className="difficulty-bar-track">
+                    <div className="difficulty-bar-fill" style={{ width: `${pct}%`, background: 'var(--accent)' }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {analysisStats && analysisStats.monthly.length > 0 && (
+        <div className="stats-visualization">
+          <h2 className="section-title">{t('profile.monthlyTrend')}</h2>
+          <div className="monthly-trend">
+            {(() => {
+              const max = Math.max(1, ...analysisStats.monthly.map((m: any) => m.total));
+              return analysisStats.monthly.map((m: any) => (
+                <div key={m.month} className="monthly-bar-col" title={`${m.month}: ${m.accepted} AC / ${m.total} 提交`}>
+                  <div className="monthly-bar-stack">
+                    <div className="monthly-bar-accepted" style={{ height: `${(m.accepted / max) * 100}%` }} />
+                    <div className="monthly-bar-total" style={{ height: `${(m.total / max) * 100}%` }} />
+                  </div>
+                  <span className="monthly-bar-label">{m.month.slice(5)}</span>
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
+
+      {analysisStats && analysisStats.status.length > 0 && (
+        <div className="stats-visualization">
+          <h2 className="section-title">{t('profile.submissionStatus')}</h2>
+          <div className="language-bars">
+            {analysisStats.status.map((s: any) => (
+              <div key={s.status} className="language-bar-item">
+                <div className="language-bar-header">
+                  <span className="language-bar-label">{s.status}</span>
+                  <span className="language-bar-count">{s.count}</span>
+                </div>
+                <div className="difficulty-bar-track">
+                  <div className="difficulty-bar-fill" style={{ width: `${Math.min(100, s.count)}%`, background: 'var(--text-muted)' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 用户标签云 */}
+      {data && data.tag_cloud && data.tag_cloud.length > 0 && (
+        <div className="tag-cloud-section">
+          <h2 className="section-title"><Tag size={16} /> {t('profile.tagCloud')}</h2>
+          <div className="tag-cloud">
+            {data.tag_cloud.map((tg: any) => (
+              <Link
+                key={tg.tag}
+                to={`/problems?tag=${encodeURIComponent(tg.tag)}`}
+                className="tag-cloud-item"
+                style={{ fontSize: 12 + Math.min(8, tg.count) }}
+              >
+                #{tg.tag}
+                <span className="tag-cloud-count">{tg.count}</span>
+              </Link>
+            ))}
           </div>
         </div>
       )}

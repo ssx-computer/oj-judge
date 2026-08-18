@@ -2,11 +2,12 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
-import { MessageSquare, Eye, Clock, ChevronRight, Trash2, Edit3, Send, Pin } from 'lucide-react';
+import { MessageSquare, Eye, Clock, ChevronRight, Trash2, Edit3, Send, Pin, CornerUpLeft, CornerUpRight, ThumbsUp, X } from 'lucide-react';
 import { renderMarkdown } from '../utils/markdown';
 import { t } from '../i18n';
 import { useToastStore } from '../store/toast';
 import ImageUploadButton from '../components/ImageUploadButton';
+import EmojiPicker from '../components/EmojiPicker';
 import './DiscussionDetail.css';
 
 const CATEGORY_BADGE_CLASS: Record<string, string> = {
@@ -36,6 +37,8 @@ export default function DiscussionDetail() {
   const [loading, setLoading] = useState(true);
   const [replyContent, setReplyContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // 回复目标: { id, username }
+  const [replyTo, setReplyTo] = useState<{ id: number; username: string } | null>(null);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState('');
@@ -69,14 +72,32 @@ export default function DiscussionDetail() {
     if (!id || !replyContent.trim() || submitting) return;
     setSubmitting(true);
     try {
-      await api.createDiscussionReply(Number(id), replyContent.trim());
+      await api.createDiscussionReply(Number(id), replyContent.trim(), replyTo?.id);
       setReplyContent('');
+      setReplyTo(null);
       fetchDiscussion();
     } catch (e: any) {
       addToast('error', e.message || t('common.error'));
       console.error('Failed to reply:', e);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // 回复某条回复:设置回复目标并填入 @username
+  const handleReplyTo = (reply: any) => {
+    setReplyTo({ id: reply.id, username: reply.username || String(reply.user_id) });
+    setReplyContent(`@${reply.username || reply.user_id} `);
+  };
+
+  // 点赞/取消点赞回复
+  const handleLikeReply = async (replyId: number) => {
+    if (!id) return;
+    try {
+      const result = await api.toggleDiscussionReplyLike(Number(id), replyId);
+      setReplies((prev) => prev.map((r) => r.id === replyId ? { ...r, liked_by_me: result.liked, like_count: (r.like_count || 0) + (result.liked ? 1 : -1) } : r));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
     }
   };
 
@@ -287,6 +308,7 @@ export default function DiscussionDetail() {
                     <span className="reply-author">
                       {reply.username || reply.user_id}
                     </span>
+                    {reply.user_title && <span className="user-title-badge">{reply.user_title}</span>}
                     <span className="reply-date">
                       <Clock size={12} />
                       {formatDate(reply.created_at)}
@@ -303,10 +325,31 @@ export default function DiscussionDetail() {
                       </div>
                     )}
                   </div>
+                  {reply.parent_id && (
+                    <div className="comment-parent-ref">
+                      <CornerUpRight size={12} />
+                      <span>{t('blogs.replyingTo').replace('{0}', `@${reply.parent_username || ''}`)}</span>
+                    </div>
+                  )}
                   <div
                     className="reply-content"
                     dangerouslySetInnerHTML={{ __html: renderMarkdown(reply.content) }}
                   />
+                  <div className="comment-actions">
+                    {user && (
+                      <button className="comment-action-btn" onClick={() => handleReplyTo(reply)}>
+                        <CornerUpLeft size={13} /> {t('blogs.reply')}
+                      </button>
+                    )}
+                    {user && (
+                      <button
+                        className={`comment-action-btn ${reply.liked_by_me ? 'liked' : ''}`}
+                        onClick={() => handleLikeReply(reply.id)}
+                      >
+                        <ThumbsUp size={13} /> {reply.like_count || 0}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -315,6 +358,17 @@ export default function DiscussionDetail() {
 
         {user ? (
           <div className="reply-form">
+            {replyTo && (
+              <div className="reply-indicator">
+                <span>{t('blogs.replyingTo').replace('{0}', `@${replyTo.username}`)}</span>
+                <button type="button" className="btn-icon-sm" onClick={() => { setReplyTo(null); setReplyContent(''); }} title={t('common.cancel')}>
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+              <EmojiPicker onInsert={(text) => setReplyContent((prev) => prev + text)} />
+            </div>
             <textarea
               className="reply-textarea"
               placeholder={t('discussions.replyPlaceholder')}

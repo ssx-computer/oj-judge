@@ -60,6 +60,47 @@ audit.get('/logs', authMiddleware, adminMiddleware, async (c) => {
   });
 });
 
+// GET /audit/logs/export — 导出审计日志 CSV(与 /logs 相同过滤条件,admin)
+audit.get('/logs/export', authMiddleware, adminMiddleware, async (c) => {
+  const search = c.req.query('search') || '';
+  const action = c.req.query('action') || '';
+  const ipFilter = c.req.query('ip') || '';
+
+  let query = 'SELECT * FROM audit_logs WHERE 1=1';
+  const binds: any[] = [];
+
+  if (search) {
+    query += ' AND (username LIKE ? OR ip LIKE ? OR device_fingerprint LIKE ? OR action LIKE ?)';
+    const like = `%${escapeLikeWildcard(search)}%`;
+    binds.push(like, like, like, like);
+  }
+  if (action) {
+    query += ' AND action LIKE ?';
+    binds.push(`%${escapeLikeWildcard(action)}%`);
+  }
+  if (ipFilter) {
+    query += ' AND ip = ?';
+    binds.push(ipFilter);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT 5000';
+  const results = await c.env.DB.prepare(query).bind(...binds).all();
+
+  // CSV 转义
+  const esc = (v: any) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ['id', 'user_id', 'username', 'ip', 'device_fingerprint', 'action', 'method', 'path', 'user_agent', 'created_at'];
+  const rows = (results.results as any[]).map((r) => header.map((h) => esc(r[h])).join(','));
+  const csv = '\uFEFF' + [header.join(','), ...rows].join('\r\n');
+
+  c.header('Content-Type', 'text/csv; charset=utf-8');
+  c.header('Content-Disposition', 'attachment; filename="audit-logs.csv"');
+  c.header('Cache-Control', 'no-store');
+  return c.body(csv);
+});
+
 // ── Banned IPs ──
 
 // GET /audit/banned-ips - List banned IPs

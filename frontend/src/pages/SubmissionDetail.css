@@ -351,3 +351,66 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* ── 提交历史对比面板 ── */
+.submission-history {
+  margin-top: 20px;
+}
+
+.submission-history h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.history-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-color, #eee);
+}
+
+.history-row:last-child {
+  border-bottom: none;
+}
+
+.history-row.history-header {
+  background: var(--bg-tertiary, #f3f4f6);
+  font-weight: 600;
+  color: var(--text-secondary, #888);
+  font-size: 12px;
+}
+
+.history-row.current {
+  background: var(--accent-light, rgba(79, 110, 247, 0.08));
+}
+
+.hist-col-id { width: 90px; }
+.hist-col-status { width: 120px; }
+.hist-col-score { width: 70px; }
+.hist-col-lang { width: 100px; }
+.hist-col-time { flex: 1; min-width: 120px; }
+.hist-col-action { width: 90px; text-align: right; }
+
+.history-current-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: var(--accent, #4f6ef7);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 10px;
+  vertical-align: middle;
+}

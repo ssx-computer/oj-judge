@@ -99,14 +99,26 @@ export async function seedDatabase(db: D1Database, env: { GITHUB_TOKEN: string; 
     throw new Error('Seed has already been executed. Cannot run again.');
   }
 
-  // Seed admin user if not exists
-  const existingAdmin = await db.prepare('SELECT id FROM users WHERE username = ?').bind('admin').first();
+  // Seed admin user ONLY if no admin account exists yet.
+  // 已有任意管理员账户(role=admin/super_admin 或 id=1)时,绝不创建/重置默认
+  // admin 账户及其密码,防止 __seed 在已有管理员时植入已知默认密码的后门账户。
+  const existingAdmin: any = await db.prepare(
+    "SELECT id FROM users WHERE role IN ('admin', 'super_admin') OR id = 1 LIMIT 1"
+  ).first();
   if (!existingAdmin) {
-    const passwordHash = bcrypt.hashSync('admin123456', 10);
-    await db.prepare(
-      'INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)'
-    ).bind('admin', passwordHash, 'admin', '["contest_admin","problem_admin","list_admin","ticket_admin","upload_admin"]').run();
-    console.log('Seeded admin user (username: admin, password: admin123456)');
+    // 用户名 'admin' 可能已被非管理员占用,避免唯一约束冲突
+    const nameTaken = await db.prepare('SELECT id FROM users WHERE username = ?').bind('admin').first();
+    if (!nameTaken) {
+      const passwordHash = bcrypt.hashSync('admin123456', 10);
+      await db.prepare(
+        'INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)'
+      ).bind('admin', passwordHash, 'admin', '["contest_admin","problem_admin","list_admin","ticket_admin","upload_admin"]').run();
+      console.log('Seeded admin user (username: admin) — change the default password after first login');
+    } else {
+      console.log('Seed skipped default admin: username "admin" already taken by a non-admin account');
+    }
+  } else {
+    console.log('Seed skipped default admin: an admin account already exists (password untouched)');
   }
 
   for (const problem of SEED_PROBLEMS) {

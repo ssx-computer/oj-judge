@@ -844,3 +844,61 @@
   font-size: 13px;
   color: var(--text-secondary);
 }
+
+/* ── 题目提交趋势图 ── */
+.problem-trend-section {
+  margin-top: 20px;
+}
+
+.problem-trend-section h3 {
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: var(--text-secondary, #888);
+}
+
+.problem-trend-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 110px;
+  padding: 6px 4px 0;
+  overflow-x: auto;
+}
+
+.trend-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 14px;
+  flex: 1;
+}
+
+.trend-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  height: 88px;
+}
+
+.trend-ac {
+  width: 5px;
+  background: var(--accent, #4f6ef7);
+  border-radius: 1px 1px 0 0;
+  min-height: 1px;
+}
+
+.trend-total {
+  width: 5px;
+  background: var(--text-muted, #aaa);
+  opacity: 0.3;
+  border-radius: 1px 1px 0 0;
+  min-height: 1px;
+}
+
+.trend-label {
+  font-size: 9px;
+  color: var(--text-muted, #aaa);
+}

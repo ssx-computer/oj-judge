@@ -6,6 +6,7 @@ import { getLanguageExt } from '../utils/helpers';
 import { validateSourceCode, validateLanguage } from '../utils/validator';
 import { captchaMiddleware } from '../middleware/captcha';
 import { parseContestTimeToMs, effectiveContestStatus } from '../utils/contest-time';
+import { fetchWithTimeout } from '../utils/fetch-timeout';
 
 const submissions = new Hono<AppType>();
 
@@ -177,7 +178,7 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
   try {
     const githubContent = btoa(unescape(encodeURIComponent(source_code)));
 
-    const githubResponse = await fetch(
+    const githubResponse = await fetchWithTimeout(
       `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${filePath}`,
       {
         method: 'PUT',
@@ -346,7 +347,32 @@ submissions.get('/:id', authMiddleware, async (c) => {
   return c.json({ success: true, data: { submission } });
 });
 
-// Get submission testcases detail (requires login)
+// GET /submissions/:id/history — 同一题目的历史提交列表(本人或管理员)
+// 用于「提交历史对比」:前端按提交时间线展示,并可跳转 /submissions/compare/:id1/:id2
+submissions.get('/:id/history', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const id = parseInt(c.req.param('id') || '0');
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
+
+  const sub: any = await c.env.DB.prepare('SELECT id, user_id, problem_id FROM submissions WHERE id = ?')
+    .bind(id).first();
+  if (!sub) {
+    return c.json({ success: false, error: { message: 'Submission not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (!isAdmin && sub.user_id !== user.userId) {
+    return c.json({ success: false, error: { message: 'Forbidden', code: 'FORBIDDEN' } }, 403);
+  }
+
+  const history = await c.env.DB.prepare(
+    `SELECT id, language, status, score, time_used, memory_used, created_at
+     FROM submissions
+     WHERE problem_id = ? AND user_id = ?
+     ORDER BY id DESC LIMIT 20`
+  ).bind(sub.problem_id, sub.user_id).all();
+
+  return c.json({ success: true, data: { history: history.results, problem_id: sub.problem_id } });
+});
 submissions.get('/:id/testcases', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
@@ -476,7 +502,7 @@ submissions.post('/:id/rejudge', authMiddleware, adminMiddleware, async (c) => {
     const deleteBody: any = { message: `Rejudge #${id}`, sha: existingFile?.github_sha };
 
     if (existingFile?.github_sha) {
-      await fetch(
+      await fetchWithTimeout(
         `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${filePath}`,
         {
           method: 'DELETE',
@@ -490,7 +516,7 @@ submissions.post('/:id/rejudge', authMiddleware, adminMiddleware, async (c) => {
       );
     }
 
-    const githubResponse = await fetch(
+    const githubResponse = await fetchWithTimeout(
       `https://api.github.com/repos/${c.env.JUDGE_REPO}/contents/${filePath}`,
       {
         method: 'PUT',

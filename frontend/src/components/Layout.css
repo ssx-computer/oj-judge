@@ -276,3 +276,39 @@
     padding: 16px 12px;
   }
 }
+/* ── 页脚友情链接 ── */
+.footer-friend-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color, #eee);
+}
+
+.footer-friend-label {
+  font-size: 12px;
+  color: var(--text-muted, #999);
+  font-weight: 600;
+}
+
+.footer-friend-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.footer-friend-links a:hover {
+  color: var(--accent, #4f6ef7);
+}
+
+.footer-friend-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}

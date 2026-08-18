@@ -9,7 +9,7 @@ export async function authMiddleware(c: Context<AppType>, next: Next) {
 
   const token = authHeader.slice(7);
   const { verifyJWT } = await import('../utils/jwt');
-  const payload = await verifyJWT(token, c.env.JWT_SECRET);
+  const payload = await verifyJWT(token, c.env.JWT_SECRET, (c.env as any).JWT_SECRET_PREVIOUS);
   if (!payload) {
     return c.json({ success: false, error: { message: 'Invalid or expired token', code: 'UNAUTHORIZED' } }, 401);
   }
@@ -37,7 +37,7 @@ export async function optionalAuthMiddleware(c: Context<AppType>, next: Next) {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     const { verifyJWT } = await import('../utils/jwt');
-    const payload = await verifyJWT(token, c.env.JWT_SECRET);
+    const payload = await verifyJWT(token, c.env.JWT_SECRET, (c.env as any).JWT_SECRET_PREVIOUS);
     if (payload) {
       c.set('user', payload);
     }

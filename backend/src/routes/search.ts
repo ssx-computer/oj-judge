@@ -91,7 +91,7 @@ search.get('/suggestions', async (c) => {
   });
 });
 
-// GET /search?q=keyword&type=all|problems|users|blogs|discussions
+// GET /search?q=keyword&type=all|problems|users|blogs|discussions|solutions
 search.get('/', async (c) => {
   const q = (c.req.query('q') || '').trim();
   const type = c.req.query('type') || 'all';
@@ -104,6 +104,7 @@ search.get('/', async (c) => {
   }
 
   const results: any[] = [];
+  let total = 0;
   const like = `%${escapeLikeWildcard(q)}%`;
 
   // Search problems
@@ -126,6 +127,12 @@ search.get('/', async (c) => {
         url: `/problems/${p.slug}`,
       });
     }
+    if (type === 'problems') {
+      const cnt = await c.env.DB.prepare(
+        'SELECT COUNT(*) as total FROM problems WHERE is_public = 1 AND (title LIKE ? OR slug LIKE ?)'
+      ).bind(like, like).first();
+      total = (cnt as any)?.total || 0;
+    }
   }
 
   // Search users
@@ -145,17 +152,21 @@ search.get('/', async (c) => {
         url: `/users/${u.username}`,
       });
     }
+    if (type === 'users') {
+      const cnt = await c.env.DB.prepare('SELECT COUNT(*) as total FROM users WHERE username LIKE ?').bind(like).first();
+      total = (cnt as any)?.total || 0;
+    }
   }
 
-  // Search blogs
+  // Search blogs (title OR content)
   if (type === 'all' || type === 'blogs') {
     const blogs = await c.env.DB.prepare(
       `SELECT b.id, b.title, b.tags, b.status, b.created_at, 'blog' as type,
               u.username
        FROM blogs b JOIN users u ON b.user_id = u.id
-       WHERE b.status = 'published' AND b.title LIKE ?
+       WHERE b.status = 'published' AND (b.title LIKE ? OR b.content LIKE ?)
        LIMIT ? OFFSET ?`
-    ).bind(like, pageSize, offset).all();
+    ).bind(like, like, pageSize, offset).all();
     for (const b of blogs.results as any[]) {
       results.push({
         type: 'blog',
@@ -166,17 +177,23 @@ search.get('/', async (c) => {
         url: `/blogs/${b.id}`,
       });
     }
+    if (type === 'blogs') {
+      const cnt = await c.env.DB.prepare(
+        "SELECT COUNT(*) as total FROM blogs WHERE status = 'published' AND (title LIKE ? OR content LIKE ?)"
+      ).bind(like, like).first();
+      total = (cnt as any)?.total || 0;
+    }
   }
 
-  // Search discussions
+  // Search discussions (title OR content)
   if (type === 'all' || type === 'discussions') {
     const discussions = await c.env.DB.prepare(
       `SELECT d.id, d.title, d.reply_count, d.created_at, 'discussion' as type,
               u.username
        FROM discussions d JOIN users u ON d.user_id = u.id
-       WHERE d.title LIKE ?
+       WHERE (d.title LIKE ? OR d.content LIKE ?)
        LIMIT ? OFFSET ?`
-    ).bind(like, pageSize, offset).all();
+    ).bind(like, like, pageSize, offset).all();
     for (const d of discussions.results as any[]) {
       results.push({
         type: 'discussion',
@@ -188,18 +205,67 @@ search.get('/', async (c) => {
         url: `/discussions/${d.id}`,
       });
     }
+    if (type === 'discussions') {
+      const cnt = await c.env.DB.prepare(
+        'SELECT COUNT(*) as total FROM discussions WHERE (title LIKE ? OR content LIKE ?)'
+      ).bind(like, like).first();
+      total = (cnt as any)?.total || 0;
+    }
   }
 
-  // Sort: problems first, then users, then blogs, then discussions
-  const typeOrder: Record<string, number> = { problem: 0, user: 1, blog: 2, discussion: 3 };
+  // Search solutions (approved, title OR content)
+  if (type === 'all' || type === 'solutions') {
+    const solutions = await c.env.DB.prepare(
+      `SELECT s.id, s.title, s.language, s.created_at, 'solution' as type,
+              u.username, p.title as problem_title, p.slug as problem_slug
+       FROM solutions s JOIN users u ON s.user_id = u.id JOIN problems p ON s.problem_id = p.id
+       WHERE s.review_status = 'approved' AND (s.title LIKE ? OR s.content LIKE ?)
+       LIMIT ? OFFSET ?`
+    ).bind(like, like, pageSize, offset).all();
+    for (const s of solutions.results as any[]) {
+      results.push({
+        type: 'solution',
+        id: s.id,
+        title: s.title,
+        username: s.username,
+        language: s.language,
+        problem_title: s.problem_title,
+        problem_slug: s.problem_slug,
+        created_at: s.created_at,
+        url: `/solutions/${s.id}`,
+      });
+    }
+    if (type === 'solutions') {
+      const cnt = await c.env.DB.prepare(
+        "SELECT COUNT(*) as total FROM solutions WHERE review_status = 'approved' AND (title LIKE ? OR content LIKE ?)"
+      ).bind(like, like).first();
+      total = (cnt as any)?.total || 0;
+    }
+  }
+
+  // Sort: problems first, then users, then blogs, then discussions, then solutions
+  const typeOrder: Record<string, number> = { problem: 0, user: 1, blog: 2, discussion: 3, solution: 4 };
   results.sort((a, b) => (typeOrder[a.type] || 0) - (typeOrder[b.type] || 0));
+
+  // For 'all' queries, compute aggregate total across all searched types
+  if (type === 'all') {
+    const [p, u, b, d, s] = await Promise.all([
+      c.env.DB.prepare('SELECT COUNT(*) as total FROM problems WHERE is_public = 1 AND (title LIKE ? OR slug LIKE ?)').bind(like, like).first(),
+      c.env.DB.prepare('SELECT COUNT(*) as total FROM users WHERE username LIKE ?').bind(like).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as total FROM blogs WHERE status = 'published' AND (title LIKE ? OR content LIKE ?)").bind(like, like).first(),
+      c.env.DB.prepare('SELECT COUNT(*) as total FROM discussions WHERE (title LIKE ? OR content LIKE ?)').bind(like, like).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as total FROM solutions WHERE review_status = 'approved' AND (title LIKE ? OR content LIKE ?)").bind(like, like).first(),
+    ]);
+    total = ((p as any)?.total || 0) + ((u as any)?.total || 0) + ((b as any)?.total || 0) + ((d as any)?.total || 0) + ((s as any)?.total || 0);
+  }
 
   return c.json({
     success: true,
     data: {
       results: results.slice(0, pageSize),
-      total: results.length,
+      total,
       query: q,
+      type,
     },
   });
 });

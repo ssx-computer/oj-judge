@@ -104,6 +104,85 @@ problems.get('/', async (c) => {
 
 // ── Literal-path routes BEFORE /:slug to avoid shadowing ──
 
+// GET /problems/random — 随机一题(可选 difficulty/tag 过滤)
+problems.get('/random', async (c) => {
+  const difficulty = c.req.query('difficulty') || '';
+  const tag = c.req.query('tag') || '';
+
+  let query = `SELECT id, title, slug, difficulty FROM problems
+     WHERE is_public = 1
+       AND id NOT IN (SELECT problem_id FROM contest_problems)
+       AND id NOT IN (SELECT problem_id FROM team_contest_problems)`;
+  const binds: any[] = [];
+
+  if (difficulty) {
+    query += ' AND difficulty = ?';
+    binds.push(difficulty);
+  }
+  if (tag) {
+    query += ' AND tags LIKE ?';
+    binds.push(`%"${escapeLikeWildcard(tag)}"%`);
+  }
+
+  query += ' ORDER BY RANDOM() LIMIT 1';
+  const problem = await c.env.DB.prepare(query).bind(...binds).first();
+
+  if (!problem) {
+    return c.json({ success: false, error: { message: 'No problem found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  return c.json({ success: true, data: { problem } });
+});
+
+// GET /problems/daily — 每日一题:按日期确定性选题(同一天所有人看到同一题)
+// 可选从 settings 读取 daily_problem_difficulty / daily_problem_tag 过滤
+problems.get('/daily', async (c) => {
+  // 读取管理员配置的每日一题过滤条件(可选)
+  let difficulty = c.req.query('difficulty') || '';
+  let tag = c.req.query('tag') || '';
+  try {
+    if (!difficulty) {
+      const row: any = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'daily_problem_difficulty'").first();
+      difficulty = row?.value || '';
+    }
+    if (!tag) {
+      const row: any = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'daily_problem_tag'").first();
+      tag = row?.value || '';
+    }
+  } catch { /* ignore */ }
+
+  let query = `SELECT id, title, slug, difficulty, tags FROM problems
+     WHERE is_public = 1
+       AND id NOT IN (SELECT problem_id FROM contest_problems)
+       AND id NOT IN (SELECT problem_id FROM team_contest_problems)`;
+  const binds: any[] = [];
+  if (difficulty) {
+    query += ' AND difficulty = ?';
+    binds.push(difficulty);
+  }
+  if (tag) {
+    query += ' AND tags LIKE ?';
+    binds.push(`%"${escapeLikeWildcard(tag)}"%`);
+  }
+  query += ' ORDER BY id ASC';
+
+  const results = await c.env.DB.prepare(query).bind(...binds).all();
+  const problems = results.results as any[];
+  if (problems.length === 0) {
+    return c.json({ success: false, error: { message: 'No problem found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 以日期字符串哈希确定索引,保证当天稳定
+  const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+  let hash = 0;
+  for (let i = 0; i < dateKey.length; i++) {
+    hash = (hash * 31 + dateKey.charCodeAt(i)) >>> 0;
+  }
+  const problem = problems[hash % problems.length];
+
+  return c.json({ success: true, data: { problem, date: dateKey } });
+});
+
 // GET /problems/recommend — personalized recommendations for logged-in user
 problems.get('/recommend', authMiddleware, async (c) => {
   const user = c.get('user');
@@ -243,6 +322,108 @@ problems.get('/recommend', authMiddleware, async (c) => {
   });
 });
 
+// GET /problems/route — 做题路线推荐:基于用户擅长标签,推荐「下一难度」未解题
+// 1) 统计用户已 AC 题目的标签分布(擅长方向)
+// 2) 对每个擅长标签,统计该标签下已 AC 题目的最高难度,推荐同标签更高难度的未解题
+// 3) 补充少量未涉足标签的入门题(拓宽方向)
+problems.get('/route', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const limit = Math.min(20, Math.max(1, parseInt(c.req.query('limit') || '10')));
+
+  // 已 AC 题目及其标签/难度
+  const solvedRows = await c.env.DB.prepare(
+    `SELECT DISTINCT p.id, p.tags, p.difficulty FROM submissions s
+     JOIN problems p ON s.problem_id = p.id
+     WHERE s.user_id = ? AND s.status = 'accepted' AND p.is_public = 1`
+  ).bind(user.userId).all();
+  const solvedIds = new Set((solvedRows.results as any[]).map((r) => r.id));
+
+  // 标签 → 已 AC 的最高难度
+  const DIFF_ORDER: Record<string, number> = { Easy: 1, Medium: 2, Hard: 3 };
+  const tagMaxDiff: Record<string, string> = {};
+  for (const row of solvedRows.results as any[]) {
+    let tags: string[] = [];
+    try { tags = JSON.parse(row.tags || '[]'); } catch { continue; }
+    for (const tag of tags) {
+      const cur = tagMaxDiff[tag];
+      if (!cur || (DIFF_ORDER[row.difficulty] || 0) > (DIFF_ORDER[cur] || 0)) {
+        tagMaxDiff[tag] = row.difficulty;
+      }
+    }
+  }
+  const strongTags = Object.entries(tagMaxDiff)
+    .sort((a, b) => (DIFF_ORDER[b[1]] || 0) - (DIFF_ORDER[a[1]] || 0))
+    .slice(0, 5)
+    .map(([tag]) => tag);
+
+  // 候选池:公开题,排除已 AC 与比赛题
+  const candidates = await c.env.DB.prepare(
+    `SELECT id, title, slug, tags, difficulty FROM problems
+     WHERE is_public = 1
+       AND id NOT IN (SELECT problem_id FROM contest_problems)
+       AND id NOT IN (SELECT problem_id FROM team_contest_problems)
+     ORDER BY id DESC LIMIT 400`
+  ).all();
+
+  const routes: any[] = [];
+  const usedIds = new Set<number>();
+
+  // 第一步:擅长标签的「下一难度」题
+  for (const tag of strongTags) {
+    for (const p of (candidates.results as any[])) {
+      if (usedIds.has(p.id) || solvedIds.has(p.id)) continue;
+      let tags: string[] = [];
+      try { tags = JSON.parse(p.tags || '[]'); } catch { continue; }
+      if (!tags.includes(tag)) continue;
+      const maxDiff = tagMaxDiff[tag];
+      const pDiff = DIFF_ORDER[p.difficulty] || 0;
+      const maxD = DIFF_ORDER[maxDiff] || 0;
+      if (pDiff >= maxD) { // 同难度及以上(优先更高)
+        usedIds.add(p.id);
+        routes.push({
+          id: p.id,
+          title: p.title,
+          slug: p.slug,
+          tags: p.tags,
+          difficulty: p.difficulty,
+          reason: `进阶路线 · ${tag}`,
+        });
+        break; // 每个擅长标签最多推荐 1 题
+      }
+    }
+  }
+
+  // 第二步:未涉足标签的入门题(拓宽方向)
+  if (routes.length < limit) {
+    for (const p of (candidates.results as any[])) {
+      if (usedIds.has(p.id) || solvedIds.has(p.id)) continue;
+      let tags: string[] = [];
+      try { tags = JSON.parse(p.tags || '[]'); } catch { continue; }
+      const isNew = tags.every((t) => !strongTags.includes(t) && !(tagMaxDiff[t]));
+      if (isNew && p.difficulty !== 'Hard') {
+        usedIds.add(p.id);
+        routes.push({
+          id: p.id,
+          title: p.title,
+          slug: p.slug,
+          tags: p.tags,
+          difficulty: p.difficulty,
+          reason: `新方向 · ${tags[0] || '入门'}`,
+        });
+        if (routes.length >= limit) break;
+      }
+    }
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      routes: routes.slice(0, limit),
+      strong_tags: strongTags,
+    },
+  });
+});
+
 problems.get('/user/solved', authMiddleware, async (c) => {
   const user = c.get('user');
   const page = Math.max(1, parseInt(c.req.query('page') || '1'));
@@ -348,6 +529,36 @@ problems.get('/user/favorites', authMiddleware, async (c) => {
 });
 
 // ── Parameterized routes ──
+
+// GET /problems/:slug/trend — 题目提交趋势(近 30 天每日提交/AC)
+problems.get('/:slug/trend', async (c) => {
+  const slug = c.req.param('slug');
+  const problem: any = await c.env.DB.prepare(
+    'SELECT id FROM problems WHERE slug = ? AND is_public = 1'
+  ).bind(slug).first();
+  if (!problem) {
+    return c.json({ success: false, error: { message: 'Problem not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  const rows = await c.env.DB.prepare(
+    `SELECT date(created_at) as day, COUNT(*) as total,
+            SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted
+     FROM submissions
+     WHERE problem_id = ? AND created_at >= date('now', '-30 days')
+     GROUP BY day ORDER BY day ASC`
+  ).bind(problem.id).all();
+
+  // 补齐缺失日期(前端图表展示连续 30 天)
+  const byDay = new Map((rows.results as any[]).map((r) => [r.day, r]));
+  const trend: { day: string; total: number; accepted: number }[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    const row = byDay.get(d);
+    trend.push({ day: d.slice(5), total: row?.total || 0, accepted: row?.accepted || 0 });
+  }
+
+  return c.json({ success: true, data: { trend } });
+});
 
 problems.get('/:slug', async (c) => {
   const slug = c.req.param('slug');

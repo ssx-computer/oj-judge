@@ -6,6 +6,7 @@ import { useSettingsStore } from '../store/settings';
 import { t } from '../i18n';
 import { api, type SearchSuggestion } from '../api/client';
 import { useSiteConfig } from '../hooks/useSiteConfig';
+import { highlightText } from '../utils/highlight';
 import {
   LogOut, User, Shield, Code2, ListChecks, Trophy, Target, Heart,
   Menu, X, Sun, Moon, Swords, Ticket, BookOpen, MessageSquare, Home,
@@ -78,7 +79,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
 
   const handleSearchSubmit = (q: string) => {
     const trimmed = q.trim();
-    if (trimmed) navigate(`/problems?search=${encodeURIComponent(trimmed)}`);
+    if (trimmed) navigate(`/search?q=${encodeURIComponent(trimmed)}`);
     setShowSuggestions(false);
     setSearchQuery('');
   };
@@ -146,22 +147,37 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
       pollTimerRef.current = setInterval(fetchUnread, 30000);
     };
 
-    // Try SSE first (faster, real-time)
+    // Try SSE first (faster, real-time). EventSource 无法携带 Authorization 头,
+    // 因此先请求短时效(5 分钟)的 stream-token,避免把长期有效的登录 JWT
+    // 拼进 URL 查询参数(会进入浏览器历史/代理日志)。
     const token = useAuthStore.getState().token;
+    let disposed = false;
     if (token) {
-      try {
-        const es = new EventSource(`/api/v1/notifications/stream?token=${token}`);
-        es.addEventListener('notification', (e: MessageEvent) => {
+      api.getSSEStreamToken()
+        .then(({ token: streamToken }) => {
+          if (disposed) return;
           try {
-            const data = JSON.parse(e.data);
-            if (data.count !== undefined) setLocalUnread(data.count);
-          } catch { /* ignore */ }
-        });
-        // When SSE connects, stop any polling that may have started
-        es.addEventListener('connected', () => { stopPolling(); });
-        es.onerror = () => { es.close(); };
-        sseRef.current = es;
-      } catch { /* SSE not supported */ }
+            const es = new EventSource(`/api/v1/notifications/stream?token=${encodeURIComponent(streamToken)}`);
+            es.addEventListener('notification', (e: MessageEvent) => {
+              try {
+                const data = JSON.parse(e.data);
+                if (data.count !== undefined) setLocalUnread(data.count);
+              } catch { /* ignore */ }
+            });
+            // When SSE connects, stop any polling that may have started
+            es.addEventListener('connected', () => { stopPolling(); });
+            // 断连恢复:EventSource 出错即关闭当前连接并切换为轮询兜底,
+            // 避免 SSE 连接静默死亡后未读数不再更新(浏览器原生 EventSource
+            // 不会无限重连,显式 close + 轮询兜底最稳妥)
+            es.onerror = () => {
+              es.close();
+              sseRef.current = null;
+              startPolling();
+            };
+            sseRef.current = es;
+          } catch { /* SSE not supported */ }
+        })
+        .catch(() => { /* token 获取失败,直接回退轮询 */ startPolling(); });
     }
 
     // Fallback polling: if SSE hasn't connected within 3s, start polling
@@ -171,6 +187,7 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
     }, 3000);
 
     return () => {
+      disposed = true;
       clearTimeout(fallbackTimer);
       stopPolling();
       if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
@@ -224,8 +241,8 @@ export default function Header({ onMenuClick, unreadMsg = 0 }: HeaderProps) {
                 {suggestions.map((s) => (
                   <div key={`${s.type}-${s.id}`} className="search-suggestion-item" onClick={() => handleSuggestionClick(s.url)}>
                     <span className="suggestion-icon"><SuggestionIcon type={s.type} /></span>
-                    <span className="suggestion-title">{s.title}</span>
-                    <span className="suggestion-subtitle">{s.subtitle}</span>
+                    <span className="suggestion-title">{highlightText(s.title || '', searchQuery)}</span>
+                    <span className="suggestion-subtitle">{highlightText(s.subtitle || '', searchQuery)}</span>
                     <ExternalLink size={12} className="suggestion-go" />
                   </div>
                 ))}

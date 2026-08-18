@@ -52,6 +52,7 @@ export default function ProblemDetail() {
   const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [submissionStatus, setSubmissionStatus] = useState<'none' | 'accepted' | 'attempted'>('none');
   const [stats, setStats] = useState<any>(null);
+  const [trend, setTrend] = useState<{ day: string; total: number; accepted: number }[]>([]);
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
   const [prevProblem, setPrevProblem] = useState<any>(null);
   const [nextProblem, setNextProblem] = useState<any>(null);
@@ -180,6 +181,10 @@ export default function ProblemDetail() {
           try {
             const langs = await api.getProblemLanguages(slug);
             if (!cancelled) setProblemLanguages(langs.languages || []);
+          } catch {}
+          try {
+            const tr = await api.getProblemTrend(slug);
+            if (!cancelled) setTrend(tr.trend || []);
           } catch {}
         }
       } catch (e: any) {
@@ -856,6 +861,26 @@ export default function ProblemDetail() {
           })()}
         </div>
 
+        {trend.length > 0 && (
+          <div className="problem-trend-section">
+            <h3>{t('problemDetail.trend')}</h3>
+            <div className="problem-trend-chart">
+              {(() => {
+                const max = Math.max(1, ...trend.map((d) => d.total));
+                return trend.map((d) => (
+                  <div key={d.day} className="trend-col" title={`${d.day}: ${d.accepted} AC / ${d.total} 提交`}>
+                    <div className="trend-bars">
+                      <div className="trend-ac" style={{ height: `${(d.accepted / max) * 100}%` }} />
+                      <div className="trend-total" style={{ height: `${(d.total / max) * 100}%` }} />
+                    </div>
+                    <span className="trend-label">{d.day.slice(3)}</span>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        )}
+
         {relatedProblems.length > 0 && (
           <div className="related-problems-section">
             <h3>关联题目</h3>
@@ -1410,6 +1435,7 @@ export default function ProblemDetail() {
             theme={theme === 'dark' ? oneDark : undefined}
             extensions={[getLangExtension(language)]}
             onChange={handleSourceCodeChange}
+            style={{ fontSize: `${settings.editor_font_size || 14}px` }}
           />
         </div>
 

@@ -1,4 +1,5 @@
 import { getLanguageExt } from './helpers';
+import { fetchWithTimeout } from './fetch-timeout';
 
 interface Env {
   GITHUB_TOKEN: string;
@@ -8,7 +9,7 @@ interface Env {
 export async function fetchSpjCode(env: Env, slug: string, language: string): Promise<string | null> {
   const ext = getLanguageExt(language);
   const filePath = `spj/${slug}.${ext}`;
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       headers: {
@@ -34,7 +35,7 @@ export async function saveSpjCode(env: Env, slug: string, language: string, code
   const encodedContent = btoa(unescape(encodeURIComponent(code)));
 
   // Get current file SHA for update (required by GitHub API)
-  const currentFile = await fetch(
+  const currentFile = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       headers: {
@@ -59,7 +60,7 @@ export async function saveSpjCode(env: Env, slug: string, language: string, code
     body.sha = sha;
   }
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       method: 'PUT',
@@ -87,7 +88,7 @@ export async function deleteSpjCode(env: Env, slug: string, language: string): P
   const filePath = `spj/${slug}.${ext}`;
 
   // Get current file SHA (required for delete)
-  const currentFile = await fetch(
+  const currentFile = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       headers: {
@@ -106,7 +107,7 @@ export async function deleteSpjCode(env: Env, slug: string, language: string): P
   const fileData = await currentFile.json() as any;
   const sha = fileData.sha;
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${env.JUDGE_REPO}/contents/${filePath}`,
     {
       method: 'DELETE',

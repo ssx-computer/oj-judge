@@ -8,6 +8,7 @@ import '../Admin.css';
 
 export default function AdminAuditLogs() {
   useDocumentTitle(t('admin.auditLogs'));
+  const addToast = useToastStore((s) => s.addToast);
   const [logs, setLogs] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -107,6 +108,16 @@ export default function AdminAuditLogs() {
     URL.revokeObjectURL(url);
   };
 
+  // 导出全部日志(后端生成 CSV,遵循当前过滤条件)
+  const exportAllCSV = async () => {
+    try {
+      await api.exportAuditLogsCsv({ search: debouncedSearch || undefined });
+      addToast('success', t('admin.auditExportDone'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
   return (
     <div className="admin-page">
       <div className="admin-header">
@@ -158,6 +169,10 @@ export default function AdminAuditLogs() {
         <button className="btn btn-secondary btn-sm" onClick={exportCSV} title="导出 CSV" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <Download size={14} />
           导出 CSV
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={exportAllCSV} title={t('admin.auditExportAll')} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Download size={14} />
+          {t('admin.auditExportAll')}
         </button>
       </div>
 
