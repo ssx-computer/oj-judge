@@ -10,6 +10,7 @@ import RatingChart from '../components/RatingChart';
 import { DIFFICULTY_COLORS } from '../constants';
 import RatingBadge from '../components/RatingBadge';
 import { getRatingColor, getRatingTier } from '../utils/rating';
+import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
 import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, Mail, Users, TrendingUp, Award } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -628,8 +629,8 @@ export default function Profile() {
           <h2 className="section-title">{t('profile.contestHistory')}</h2>
           <div className="contest-history-list">
             {contests.map((contest: any) => {
-              const start = new Date(contest.start_time).getTime();
-              const end = new Date(contest.end_time).getTime();
+              const start = parseContestTimeToMs(contest.start_time);
+              const end = parseContestTimeToMs(contest.end_time);
               let statusLabel: string;
               let statusClass: string;
               if (now < start) {
@@ -650,8 +651,13 @@ export default function Profile() {
                       {contest.title}
                     </div>
                     <div className="contest-history-meta">
-                      <span><Calendar size={12} /> {new Intl.DateTimeFormat().format(new Date(contest.start_time))} - {new Intl.DateTimeFormat().format(new Date(contest.end_time))}</span>
+                      <span><Calendar size={12} /> {formatContestTime(contest.start_time)} - {formatContestTime(contest.end_time)}</span>
                       <span>{contest.participant_count ?? 0} {t('contests.participants')}</span>
+                      {contest.final_rank != null && (
+                        <span className="contest-history-rank">
+                          <Trophy size={12} /> {t('profile.finalRank').replace('{0}', String(contest.final_rank))}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <span className={statusClass}>{statusLabel}</span>

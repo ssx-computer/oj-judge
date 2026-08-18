@@ -105,6 +105,13 @@ discussions.post('/', authMiddleware, captchaMiddleware('discussion'), async (c)
     return c.json({ success: false, error: { message: 'content is required', code: 'BAD_REQUEST' } }, 400);
   }
 
+  if (title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (content.length > 200000) {
+    return c.json({ success: false, error: { message: 'content must be at most 200000 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+
   const validCategories = ['question', 'share', 'general'];
   if (category && !validCategories.includes(category)) {
     return c.json({ success: false, error: { message: 'category must be one of: question, share, general', code: 'BAD_REQUEST' } }, 400);
@@ -139,6 +146,12 @@ discussions.put('/:id', authMiddleware, async (c) => {
   const validCategories = ['question', 'share', 'general'];
   if (category && !validCategories.includes(category)) {
     return c.json({ success: false, error: { message: 'category must be one of: question, share, general', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (title !== undefined && title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (content !== undefined && content.length > 200000) {
+    return c.json({ success: false, error: { message: 'content must be at most 200000 characters', code: 'BAD_REQUEST' } }, 400);
   }
 
   const updates: string[] = [];

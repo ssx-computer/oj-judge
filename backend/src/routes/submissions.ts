@@ -5,18 +5,24 @@ import { rateLimitMiddleware } from '../middleware/rateLimit';
 import { getLanguageExt } from '../utils/helpers';
 import { validateSourceCode, validateLanguage } from '../utils/validator';
 import { captchaMiddleware } from '../middleware/captcha';
+import { parseContestTimeToMs, effectiveContestStatus } from '../utils/contest-time';
 
 const submissions = new Hono<AppType>();
 
 // OI 赛制赛时隐藏评测结果:比赛运行中且赛制为 oi 时,非主办方用户看不到状态/得分
+// 按时间动态判定(不依赖可能过期的 status 静态字段),与 contests.ts 一致
 async function getHiddenOIContestIds(db: D1Database, ids: number[]): Promise<Set<number>> {
   const cleanIds = [...new Set(ids.filter((x) => x))];
   if (cleanIds.length === 0) return new Set();
   const placeholders = cleanIds.map(() => '?').join(',');
   const rows = await db.prepare(
-    `SELECT id FROM contests WHERE id IN (${placeholders}) AND scoring_type = 'oi' AND status = 'running'`
+    `SELECT id, start_time, end_time FROM contests WHERE id IN (${placeholders}) AND scoring_type = 'oi'`
   ).bind(...cleanIds).all();
-  return new Set((rows.results as any[]).map((r) => r.id));
+  const hidden = new Set<number>();
+  for (const r of rows.results as any[]) {
+    if (effectiveContestStatus(r) === 'running') hidden.add(r.id);
+  }
+  return hidden;
 }
 
 function canViewOIResult(user: any): boolean {
@@ -37,6 +43,11 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
   const user = c.get('user');
   const body = await c.req.json();
   const { problem_id, language, source_code, contest_id, team_contest_id } = body;
+
+  // 互斥校验:contest_id 与 team_contest_id 不能同时提交
+  if (contest_id && team_contest_id) {
+    return c.json({ success: false, error: { message: 'contest_id and team_contest_id are mutually exclusive', code: 'BAD_REQUEST' } }, 400);
+  }
 
   if (!problem_id || !language || !source_code) {
     return c.json({ success: false, error: { message: 'problem_id, language, and source_code are required', code: 'BAD_REQUEST' } }, 400);
@@ -75,23 +86,40 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
   let contestSubmissionId: number | null = null;
   if (contest_id) {
     const contest = await c.env.DB.prepare(
-      'SELECT id, status FROM contests WHERE id = ?'
+      'SELECT id, status, start_time, end_time, duration_minutes FROM contests WHERE id = ?'
     ).bind(contest_id).first();
     if (!contest) {
       return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
     }
-    // 按当前时间动态判定,避免 status 字段过期导致拦截失效
-    const nowMs = Date.now();
-    const cStart = new Date((contest as any).start_time).getTime();
-    const cEnd = new Date((contest as any).end_time).getTime();
-    if (!(nowMs >= cStart && nowMs < cEnd)) {
-      return c.json({ success: false, error: { message: 'Contest is not running', code: 'FORBIDDEN' } }, 403);
-    }
+    // 报名记录(含虚拟参赛标记与虚拟开始时间)
     const participant = await c.env.DB.prepare(
-      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+      'SELECT id, is_virtual, virtual_start_time FROM contest_participants WHERE contest_id = ? AND user_id = ?'
     ).bind(contest_id, user.userId).first();
     if (!participant) {
       return c.json({ success: false, error: { message: 'You must register for this contest first', code: 'FORBIDDEN' } }, 403);
+    }
+
+    const nowMs = Date.now();
+    // 虚拟参赛者:提交时间窗为 [virtual_start_time, virtual_start_time + duration_minutes](有时长时)
+    // 真实参赛者:提交时间窗为比赛 [start_time, end_time]
+    if ((participant as any).is_virtual) {
+      const vStart = parseContestTimeToMs((participant as any).virtual_start_time);
+      if (!isFinite(vStart)) {
+        return c.json({ success: false, error: { message: 'Invalid virtual start time', code: 'BAD_REQUEST' } }, 400);
+      }
+      const vDuration = parseInt((contest as any).duration_minutes) || 0;
+      const vEnd = vDuration > 0 ? vStart + vDuration * 60000 : Number.POSITIVE_INFINITY;
+      if (!(nowMs >= vStart && nowMs < vEnd)) {
+        return c.json({ success: false, error: { message: 'Virtual contest time has ended', code: 'FORBIDDEN' } }, 403);
+      }
+    } else {
+      // 按当前时间动态判定,避免 status 字段过期导致拦截失效
+      // (统一使用 parseContestTimeToMs,与 contests.ts 时区解析一致)
+      const cStart = parseContestTimeToMs((contest as any).start_time);
+      const cEnd = parseContestTimeToMs((contest as any).end_time);
+      if (!(nowMs >= cStart && nowMs < cEnd)) {
+        return c.json({ success: false, error: { message: 'Contest is not running', code: 'FORBIDDEN' } }, 403);
+      }
     }
     const cp = await c.env.DB.prepare(
       'SELECT id FROM contest_problems WHERE contest_id = ? AND problem_id = ?'
@@ -107,15 +135,16 @@ submissions.post('/', authMiddleware, captchaMiddleware('submit'), rateLimitMidd
   let teamContestSubmissionId: number | null = null;
   if (team_contest_id) {
     const teamContest = await c.env.DB.prepare(
-      'SELECT tc.id, tc.team_id, tc.status FROM team_contests tc WHERE tc.id = ?'
+      'SELECT tc.id, tc.team_id, tc.start_time, tc.end_time FROM team_contests tc WHERE tc.id = ?'
     ).bind(team_contest_id).first();
     if (!teamContest) {
       return c.json({ success: false, error: { message: 'Team contest not found', code: 'NOT_FOUND' } }, 404);
     }
     // 按当前时间动态判定,避免 status 字段过期导致拦截失效
+    // (统一使用 parseContestTimeToMs,与 contests.ts 时区解析一致)
     const tcNowMs = Date.now();
-    const tcStart = new Date((teamContest as any).start_time).getTime();
-    const tcEnd = new Date((teamContest as any).end_time).getTime();
+    const tcStart = parseContestTimeToMs((teamContest as any).start_time);
+    const tcEnd = parseContestTimeToMs((teamContest as any).end_time);
     if (!(tcNowMs >= tcStart && tcNowMs < tcEnd)) {
       return c.json({ success: false, error: { message: 'Team contest is not running', code: 'FORBIDDEN' } }, 403);
     }
@@ -198,7 +227,8 @@ submissions.get('/', authMiddleware, async (c) => {
   const language = c.req.query('language');
   const offset = (page - 1) * pageSize;
 
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
 
   let query = 'SELECT s.id, s.user_id, s.problem_id, s.language, s.status, s.score, s.time_used, s.memory_used, s.created_at, s.contest_id, p.title as problem_title, p.slug as problem_slug, u.username FROM submissions s JOIN problems p ON s.problem_id = p.id JOIN users u ON s.user_id = u.id WHERE 1=1';
   let countQuery = 'SELECT COUNT(*) as total FROM submissions WHERE 1=1';
@@ -275,7 +305,8 @@ submissions.get('/', authMiddleware, async (c) => {
 submissions.get('/:id', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
 
   let query = `SELECT s.*, p.title as problem_title, p.slug as problem_slug, u.username
      FROM submissions s JOIN problems p ON s.problem_id = p.id JOIN users u ON s.user_id = u.id
@@ -319,7 +350,8 @@ submissions.get('/:id', authMiddleware, async (c) => {
 submissions.get('/:id/testcases', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
 
   // Verify the submission belongs to the user (or user is admin)
   const submission = await c.env.DB.prepare('SELECT id, user_id, contest_id FROM submissions WHERE id = ?')
@@ -355,7 +387,8 @@ submissions.get('/:id/testcases', authMiddleware, async (c) => {
 submissions.get('/:id/logs', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
 
   // Verify the submission belongs to the user (or user is admin)
   const submission = await c.env.DB.prepare('SELECT id, user_id FROM submissions WHERE id = ?')
@@ -384,7 +417,8 @@ submissions.get('/compare/:id1/:id2', authMiddleware, async (c) => {
   const user = c.get('user');
   const id1 = parseInt(c.req.param('id1') || '0');
   const id2 = parseInt(c.req.param('id2') || '0');
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
 
   const [s1, s2] = await Promise.all([
     c.env.DB.prepare(

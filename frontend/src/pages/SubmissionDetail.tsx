@@ -291,8 +291,8 @@ export default function SubmissionDetail() {
                         <StatusBadge status={tc.status} />
                       </div>
                       <div className="tc-details">
-                        {tc.time_used && <span>{t('submissions.time')}: {tc.time_used}ms</span>}
-                        {tc.memory_used && <span>{t('submissions.memory')}: {tc.memory_used}KB</span>}
+                        {tc.time_used != null && <span>{t('submissions.time')}: {tc.time_used}ms</span>}
+                        {tc.memory_used != null && <span>{t('submissions.memory')}: {tc.memory_used}KB</span>}
                         {tc.score !== undefined && <span>{t('submissions.score')}: {tc.score}</span>}
                         {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                       </div>

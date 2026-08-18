@@ -21,6 +21,7 @@ export default function MyFiles() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [uploading, setUploading] = useState(false);
+  const [filePublic, setFilePublic] = useState(true);
   const [activeTab, setActiveTab] = useState<'image' | 'file'>('image');
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -62,7 +63,7 @@ export default function MyFiles() {
         await api.uploadImage(file);
         addToast('success', t('common.uploadSuccess'));
       } else {
-        await api.uploadFile(file);
+        await api.uploadFile(file, filePublic);
         addToast('success', t('common.uploadSuccess'));
       }
       fetchUploads(page);
@@ -141,6 +142,12 @@ export default function MyFiles() {
             <Upload size={14} />
             {uploading ? t('common.loading') : (effectiveTab === 'image' ? t('common.uploadImage') : t('common.uploadFile'))}
           </button>
+          {effectiveTab === 'file' && (
+            <label className="myfiles-public-label" title={t('common.filePublicHint')}>
+              <input type="checkbox" checked={filePublic} onChange={(e) => setFilePublic(e.target.checked)} />
+              {t('common.public')}
+            </label>
+          )}
         </div>
       )}
 

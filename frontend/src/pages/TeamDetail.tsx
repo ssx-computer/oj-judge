@@ -1434,7 +1434,7 @@ function ProblemSetsTab({ teamId, isMember }: { teamId: number; isMember: boolea
               <div key={p.id} className="problem-row">
                 <Link to={`/team/${teamId}/problem/${p.problem_id}`}>{p.title}</Link>
                 <span className={`diff-badge diff-${p.difficulty?.toLowerCase()}`}>{p.difficulty}</span>
-                {p.solved && <span className="badge badge-success"><Check size={12} /> {t('problemList.accepted')}</span>}
+                {!!p.solved && <span className="badge badge-success"><Check size={12} /> {t('problemList.accepted')}</span>}
               </div>
             ))}
           </div>
@@ -1556,8 +1556,8 @@ function ContestsTab({ teamId, canManage }: { teamId: number; canManage: boolean
             <div key={c.id} className="card contest-item">
               <h4>{c.title}</h4>
               <div className="contest-meta">
-                <span><Calendar size={12} /> {new Date(c.start_time).toLocaleDateString()}</span>
-                <span><Clock size={12} /> {c.status}</span>
+                <span><Calendar size={12} /> {formatContestTime(c.start_time)}</span>
+                <span><Clock size={12} /> {c.effective_status || c.status}</span>
                 <span><Users size={12} /> {c.participant_count}</span>
               </div>
             </div>

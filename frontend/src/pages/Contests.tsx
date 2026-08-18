@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
-import { Trophy, Calendar, Users, Filter, PlusCircle, AlertCircle } from 'lucide-react';
+import { Trophy, Calendar, Users, Filter, PlusCircle, AlertCircle, Clock, Play, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { t } from '../i18n';
 import { usePermissions } from '../hooks/usePermissions';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useNow } from '../hooks/useNow';
+import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
 import './Contests.css';
 
 const STATUS_OPTIONS = ['all', 'upcoming', 'running', 'ended'] as const;
@@ -18,12 +19,20 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
   ended: 'badge badge-ended',
 };
 
+const STATUS_ICON: Record<string, any> = {
+  upcoming: Clock,
+  running: Play,
+  ended: CheckCircle,
+};
+
 export default function Contests() {
   const perms = usePermissions();
   const [contests, setContests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<any>(null);
   const now = useNow();
   useDocumentTitle(t('contests.title'));
 
@@ -33,20 +42,29 @@ export default function Contests() {
     try {
       const data = await api.getContests({
         status: statusFilter !== 'all' ? statusFilter : undefined,
+        page,
+        pageSize: 20,
       });
       setContests(data.contests);
+      setPagination(data.pagination);
     } catch (e) {
       console.error('Failed to fetch contests:', e);
       setLoadError(true);
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, page]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContests();
   }, [fetchContests]);
+
+  // 切换状态筛选时回到第一页
+  const changeStatusFilter = (status: string) => {
+    setStatusFilter(status);
+    setPage(1);
+  };
 
   const getStatusLabel = (status: string) => {
     if (status === 'upcoming') return t('contests.upcoming');
@@ -55,16 +73,18 @@ export default function Contests() {
   };
 
   const getContestStatus = (contest: any): string => {
-    if (contest.status) return contest.status;
-    const start = new Date(contest.start_time).getTime();
-    const end = new Date(contest.end_time).getTime();
+    // 以服务端时间为准:优先使用后端返回的 effective_status(按服务器时间动态计算)
+    if (contest.effective_status) return contest.effective_status;
+    // 兜底(旧接口未返回该字段时):本地按 UTC 解析计算,与后端 parseContestTimeToMs 一致
+    const start = parseContestTimeToMs(contest.start_time);
+    const end = parseContestTimeToMs(contest.end_time);
     if (now < start) return 'upcoming';
-    if (now >= start && now <= end) return 'running';
+    if (now >= start && now < end) return 'running';
     return 'ended';
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString();
+    return formatContestTime(dateStr);
   };
 
   return (
@@ -90,7 +110,7 @@ export default function Contests() {
             <button
               key={status}
               className={`filter-btn ${statusFilter === status ? 'active' : ''}`}
-              onClick={() => setStatusFilter(status)}
+              onClick={() => changeStatusFilter(status)}
             >
               {status === 'all' ? t('contests.all') : getStatusLabel(status)}
             </button>
@@ -123,7 +143,8 @@ export default function Contests() {
               >
                 <div className="contest-card-header">
                   <h3 className="contest-title">{contest.title}</h3>
-                  <span className={STATUS_BADGE_CLASS[status] || 'badge'}>
+                  <span className={`${STATUS_BADGE_CLASS[status] || 'badge'} contest-status-badge`}>
+                    {(() => { const Icon = STATUS_ICON[status] || Clock; return <Icon size={12} />; })()}
                     {getStatusLabel(status)}
                   </span>
                 </div>
@@ -146,8 +167,31 @@ export default function Contests() {
               </Link>
             );
           })}
-        </div>
-      )}
-    </div>
-  );
-}
+          </div>
+        )}
+        {pagination && pagination.totalPages > 1 && (
+          <div className="contests-pagination">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={pagination.page <= 1}
+              onClick={() => setPage(pagination.page - 1)}
+            >
+              <ChevronLeft size={14} /> {t('common.previous')}
+            </button>
+            <span className="contests-pagination-info">
+              {t('common.page').replace('{0}', String(pagination.page)).replace('{1}', String(pagination.totalPages))}
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={pagination.page >= pagination.totalPages}
+              onClick={() => setPage(pagination.page + 1)}
+            >
+              {t('common.next')} <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }

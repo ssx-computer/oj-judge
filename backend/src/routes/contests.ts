@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { AppType } from '../types';
-import { authMiddleware, contestAdminMiddleware, adminMiddleware } from '../middleware/auth';
+import { authMiddleware, optionalAuthMiddleware, contestAdminMiddleware, adminMiddleware } from '../middleware/auth';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { computeContestRatingChanges, RatingParticipant, INITIAL_RATING } from '../utils/rating';
 import { sendNotification, NotificationType } from '../utils/notify';
+import { recordAuditLog } from '../middleware/audit';
+import { parseContestTimeToMs, effectiveContestStatus } from '../utils/contest-time';
 
 const contests = new Hono<AppType>();
 
@@ -19,14 +21,178 @@ function normalizeScoringType(s: any): 'oi' | 'icpc' | 'ioi' {
   return 'icpc'; // default + legacy 'acm' both map to icpc
 }
 
-// 按当前时间动态计算比赛状态(不依赖可能过期的 contest.status 静态字段)
-function effectiveContestStatus(contest: any): 'upcoming' | 'running' | 'ended' {
-  const now = Date.now();
-  const start = new Date(contest.start_time).getTime();
-  const end = new Date(contest.end_time).getTime();
-  if (now >= start && now < end) return 'running';
-  if (now >= end) return 'ended';
-  return 'upcoming';
+// 校验比赛题目列表:problem_id 必须存在且为正整数,score 必须在 0-1000(与前端一致)
+// 返回错误信息,全部合法时返回 null
+async function validateContestProblems(db: D1Database, problems: any[]): Promise<string | null> {
+  for (const p of problems) {
+    const pid = parseInt(p.problem_id);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return 'problem_id must be a valid positive integer';
+    }
+    const score = p.score === undefined || p.score === null ? 100 : Number(p.score);
+    if (!Number.isFinite(score) || score < 0 || score > 1000) {
+      return 'score must be between 0 and 1000';
+    }
+    const exists = await db.prepare('SELECT id FROM problems WHERE id = ?').bind(pid).first();
+    if (!exists) {
+      return `Problem #${pid} not found`;
+    }
+  }
+  return null;
+}
+
+// 比赛时间解析与动态状态判定见 ../utils/contest-time(parseContestTimeToMs / effectiveContestStatus)
+
+// ── 排行榜计分核心(排行榜路由与 Rating 结算共用,保证排名一致) ──
+interface RankingInput {
+  submissions: any[];         // 已按时间窗过滤的提交
+  participants: any[];        // 含 user_id / username / is_virtual / virtual_start_time
+  contestProblems: any[];     // 含 label / problem_id / score
+  scoringType: 'oi' | 'icpc' | 'ioi';
+  contestStartTime: number;
+  virtualStartMap: Record<number, number>;
+}
+
+function buildContestRankings(input: RankingInput): any[] {
+  const { submissions, participants, contestProblems, scoringType, contestStartTime, virtualStartMap } = input;
+
+  // Group submissions by user_id and problem_id
+  const bestSubs: Record<string, any> = {};
+  const lastSubs: Record<string, any> = {};   // OI: last submission per problem
+  const attemptCounts: Record<string, number> = {};
+  const firstAcceptedAt: Record<string, string> = {};
+
+  for (const sub of submissions) {
+    const key = `${sub.user_id}:${sub.problem_id}`;
+    attemptCounts[key] = (attemptCounts[key] || 0) + 1;
+    // Find best submission (ICPC and IOI both use best score)
+    const existing = bestSubs[key];
+    if (!existing || sub.score > existing.score || (sub.score === existing.score && sub.time_used < existing.time_used)) {
+      bestSubs[key] = sub;
+    }
+    // OI: keep the latest submission (by created_at)
+    const prevLast = lastSubs[key];
+    if (!prevLast || new Date(sub.created_at) > new Date(prevLast.created_at)) {
+      lastSubs[key] = sub;
+    }
+    if (sub.status === 'accepted') {
+      if (!firstAcceptedAt[key] || new Date(sub.created_at) < new Date(firstAcceptedAt[key])) {
+        firstAcceptedAt[key] = sub.created_at;
+      }
+    }
+  }
+
+  // Count wrong attempts before first accepted for penalty (ICPC only)
+  const wrongBeforeAccepted: Record<string, number> = {};
+  for (const sub of submissions) {
+    const key = `${sub.user_id}:${sub.problem_id}`;
+    if (firstAcceptedAt[key] && new Date(sub.created_at) <= new Date(firstAcceptedAt[key])) {
+      if (sub.status !== 'accepted') {
+        wrongBeforeAccepted[key] = (wrongBeforeAccepted[key] || 0) + 1;
+      }
+    }
+  }
+
+  // Build rankings
+  const rankings: any[] = [];
+  for (const participant of participants) {
+    const userId = participant.user_id;
+    const username = participant.username;
+    let totalScore = 0;
+    let acceptedCount = 0;
+    let totalPenalty = 0; // penalty in minutes
+    const problemResults: any = {};
+
+    for (const cp of contestProblems) {
+      const problemId = cp.problem_id;
+      const label = cp.label;
+      const score = cp.score;
+      const key = `${userId}:${problemId}`;
+      const bestSub = bestSubs[key];
+      const attempts = attemptCounts[key] || 0;
+      const wrongAttempts = wrongBeforeAccepted[key] || 0;
+
+      if (bestSub) {
+        if (scoringType === 'oi') {
+          // OI: last submission counts, scored by test points
+          const lastSub = lastSubs[key];
+          problemResults[label] = {
+            status: lastSub ? lastSub.status : bestSub.status,
+            score: lastSub ? (lastSub.score || 0) : 0,
+            time_used: lastSub ? (lastSub.time_used || 0) : 0,
+            attempts,
+            wrong_attempts: 0,
+          };
+          totalScore += lastSub ? (lastSub.score || 0) : 0;
+        } else if (scoringType === 'ioi') {
+          // IOI: best score across all attempts, no penalty
+          problemResults[label] = {
+            status: bestSub.status,
+            score: bestSub.score || 0,
+            time_used: bestSub.time_used || 0,
+            attempts,
+            wrong_attempts: wrongAttempts,
+          };
+          totalScore += bestSub.score || 0;
+          if (bestSub.status === 'accepted') acceptedCount++;
+        } else {
+          // ICPC: best score, penalty on AC
+          problemResults[label] = {
+            status: bestSub.status,
+            score: bestSub.score || 0,
+            time_used: bestSub.time_used || 0,
+            attempts,
+            wrong_attempts: wrongAttempts,
+          };
+          if (bestSub.status === 'accepted') {
+            acceptedCount++;
+            totalScore += (bestSub.score != null && bestSub.score > 0) ? bestSub.score : score;
+            const acTime = parseContestTimeToMs(firstAcceptedAt[key]);
+            // For virtual participants, use their virtual start time as base
+            const baseTime = virtualStartMap[userId] || contestStartTime;
+            const timeFromStart = Math.floor((acTime - baseTime) / 60000);
+            totalPenalty += timeFromStart + wrongAttempts * 20;
+          } else {
+            totalScore += bestSub.score > 0 ? bestSub.score : 0;
+          }
+        }
+      } else {
+        problemResults[label] = null;
+      }
+    }
+
+    rankings.push({
+      user_id: userId,
+      username,
+      is_virtual: participant.is_virtual || 0,
+      virtual_start_time: participant.virtual_start_time || null,
+      total_score: totalScore,
+      accepted_count: acceptedCount,
+      total_penalty: totalPenalty,
+      problems: problemResults,
+    });
+  }
+
+  rankings.sort((a, b) => {
+    if (b.total_score !== a.total_score) return b.total_score - a.total_score;
+    return a.total_penalty - b.total_penalty;
+  });
+
+  // Assign ranks (1-based; ties share rank, next rank skips)
+  let prevScore: number | null = null;
+  let prevPenalty: number | null = null;
+  let prevRank = 0;
+  for (let i = 0; i < rankings.length; i++) {
+    const r = rankings[i];
+    if (prevScore === null || r.total_score !== prevScore || r.total_penalty !== prevPenalty) {
+      prevRank = i + 1;
+    }
+    r.rank = prevRank;
+    prevScore = r.total_score;
+    prevPenalty = r.total_penalty;
+  }
+
+  return rankings;
 }
 
 // List contests
@@ -41,14 +207,20 @@ contests.get('/', async (c) => {
   const binds: any[] = [];
   const countBinds: any[] = [];
 
-  if (status) {
-    query += ' AND c.status = ?';
-    countQuery += ' AND status = ?';
-    binds.push(status);
-    countBinds.push(status);
-  } else {
-    query += ' AND c.is_public = 1';
-    countQuery += ' AND is_public = 1';
+  // 公开比赛列表:始终限定 is_public = 1,避免非公开比赛泄露
+  query += ' AND c.is_public = 1';
+  countQuery += ' AND is_public = 1';
+
+  // status 筛选按当前时间动态判断,不依赖可能过期的 status 静态字段
+  if (status === 'upcoming') {
+    query += ' AND datetime(c.start_time) > datetime(\'now\')';
+    countQuery += " AND datetime(start_time) > datetime('now')";
+  } else if (status === 'running') {
+    query += " AND datetime(c.start_time) <= datetime('now') AND datetime(c.end_time) > datetime('now')";
+    countQuery += " AND datetime(start_time) <= datetime('now') AND datetime(end_time) > datetime('now')";
+  } else if (status === 'ended') {
+    query += " AND datetime(c.end_time) <= datetime('now')";
+    countQuery += " AND datetime(end_time) <= datetime('now')";
   }
 
   query += ' ORDER BY c.start_time DESC LIMIT ? OFFSET ?';
@@ -57,18 +229,25 @@ contests.get('/', async (c) => {
   const total = (countResult as any)?.total || 0;
   const results = await c.env.DB.prepare(query).bind(...binds, pageSize, offset).all();
 
+  // 每条附加服务器时间动态计算的 effective_status,前端以服务端时间为准判断状态
+  const contests = (results.results as any[]).map((c: any) => ({
+    ...c,
+    effective_status: effectiveContestStatus(c),
+  }));
+
   return c.json({
     success: true,
     data: {
-      contests: results.results,
+      contests,
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
     },
   });
 });
 
 // Get contest detail
-contests.get('/:id', async (c) => {
-  const id = parseInt(c.req.param('id'));
+// 公开比赛详情,但需识别已登录用户以返回正确的 is_registered(可选鉴权)
+contests.get('/:id', optionalAuthMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id')!);
   const contest = await c.env.DB.prepare(
     'SELECT c.*, u.username as creator_name FROM contests c JOIN users u ON c.created_by = u.id WHERE c.id = ?'
   ).bind(id).first();
@@ -77,17 +256,56 @@ contests.get('/:id', async (c) => {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
 
-  return c.json({ success: true, data: { contest } });
+  // Server-side computed fields
+  const effective_status = effectiveContestStatus(contest);
+
+  // Participant count
+  const pc = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM contest_participants WHERE contest_id = ?').bind(id).first();
+  const participant_count = (pc as any)?.cnt || 0;
+
+  // is_registered / is_virtual if user present
+  let is_registered = false;
+  let is_virtual = false;
+  const user = c.get('user');
+  if (user) {
+    const reg: any = await c.env.DB.prepare('SELECT id, is_virtual FROM contest_participants WHERE contest_id = ? AND user_id = ?').bind(id, user.userId).first();
+    is_registered = !!reg;
+    is_virtual = !!(reg && reg.is_virtual);
+  }
+
+  // 私有比赛(is_public=0)仅管理员或已报名参与者可见,避免按 ID 泄露
+  const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user?.permissions) && user.permissions.includes('contest_admin')));
+  if ((contest as any).is_public !== 1 && !isAdmin && !is_registered) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // problems_visible: reuse same logic as problems endpoint
+  const problems_visible = (() => {
+    if (!contest) return 0;
+    if (effective_status === 'running') return (isAdmin || is_registered) ? 1 : 0;
+    if (effective_status === 'upcoming') return isAdmin ? 1 : 0;
+    // ended: visible
+    return 1;
+  })();
+
+  const server_time = new Date().toISOString();
+
+  return c.json({ success: true, data: { contest, effective_status, participant_count, is_registered, is_virtual, problems_visible, server_time } });
 });
 
 // Create contest (admin only)
 contests.post('/', authMiddleware, contestAdminMiddleware, contestCreateLimiter, async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
-  const { title, description, start_time, end_time, is_public, problems, scoring_type, is_rated, allow_virtual, duration_minutes } = body;
+  const { title, description, start_time, end_time, is_public, problems, scoring_type, is_rated, allow_virtual, duration_minutes, freeze_minutes } = body;
 
   if (!title || !start_time || !end_time) {
     return c.json({ success: false, error: { message: 'title, start_time, end_time are required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  if (freeze_minutes !== undefined && (!Number.isInteger(freeze_minutes) || freeze_minutes < 0)) {
+    return c.json({ success: false, error: { message: 'freeze_minutes must be a non-negative integer', code: 'BAD_REQUEST' } }, 400);
   }
 
   if (title.length > 200) {
@@ -116,7 +334,7 @@ contests.post('/', authMiddleware, contestAdminMiddleware, contestCreateLimiter,
   if (now >= endTime) status = 'ended';
 
   const result = await c.env.DB.prepare(
-    'INSERT INTO contests (title, description, start_time, end_time, status, is_public, created_by, scoring_type, is_rated, allow_virtual, duration_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO contests (title, description, start_time, end_time, status, is_public, created_by, scoring_type, is_rated, allow_virtual, duration_minutes, freeze_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(
     title,
     description || '',
@@ -129,12 +347,17 @@ contests.post('/', authMiddleware, contestAdminMiddleware, contestCreateLimiter,
     is_rated ? 1 : 0,
     allow_virtual === false ? 0 : 1,
     duration_minutes ?? null,
+    freeze_minutes ?? 0,
   ).run();
 
   const contestId = result.meta.last_row_id;
 
   // Add problems to contest
   if (problems && Array.isArray(problems)) {
+    const problemErr = await validateContestProblems(c.env.DB, problems);
+    if (problemErr) {
+      return c.json({ success: false, error: { message: problemErr, code: 'BAD_REQUEST' } }, 400);
+    }
     for (let i = 0; i < problems.length; i++) {
       const p = problems[i];
       const label = String.fromCharCode(65 + i); // A, B, C...
@@ -144,18 +367,39 @@ contests.post('/', authMiddleware, contestAdminMiddleware, contestCreateLimiter,
     }
   }
 
+  await recordAuditLog(c, 'contest:create', user.userId, user.username);
+
   return c.json({ success: true, data: { id: contestId, message: 'Contest created' } }, 201);
 });
 
 // Update contest (admin only)
 contests.put('/:id', authMiddleware, contestAdminMiddleware, async (c) => {
+  const user = c.get('user');
   const id = parseInt(c.req.param('id')!);
   const body = await c.req.json();
-  const { title, description, start_time, end_time, is_public, status, scoring_type, is_rated, allow_virtual, duration_minutes } = body;
+  const { title, description, start_time, end_time, is_public, status, scoring_type, is_rated, allow_virtual, duration_minutes, freeze_minutes } = body;
 
   const contest = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  if (freeze_minutes !== undefined && (!Number.isInteger(freeze_minutes) || freeze_minutes < 0)) {
+    return c.json({ success: false, error: { message: 'freeze_minutes must be a non-negative integer', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  // 与创建接口一致的校验:时间顺序 + 长度限制
+  if (start_time !== undefined && end_time !== undefined && new Date(start_time) >= new Date(end_time)) {
+    return c.json({ success: false, error: { message: 'start_time must be before end_time', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (title !== undefined && title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (description !== undefined && description.length > 5000) {
+    return c.json({ success: false, error: { message: 'description must be at most 5000 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (body.problems && Array.isArray(body.problems) && body.problems.length > 26) {
+    return c.json({ success: false, error: { message: 'problems array must have at most 26 items', code: 'BAD_REQUEST' } }, 400);
   }
 
   const updates: string[] = [];
@@ -171,6 +415,7 @@ contests.put('/:id', authMiddleware, contestAdminMiddleware, async (c) => {
   if (is_rated !== undefined) { updates.push('is_rated = ?'); binds.push(is_rated ? 1 : 0); }
   if (allow_virtual !== undefined) { updates.push('allow_virtual = ?'); binds.push(allow_virtual ? 1 : 0); }
   if (duration_minutes !== undefined) { updates.push('duration_minutes = ?'); binds.push(duration_minutes); }
+  if (freeze_minutes !== undefined) { updates.push('freeze_minutes = ?'); binds.push(freeze_minutes); }
 
   if (updates.length > 0) {
     updates.push("updated_at = datetime('now')");
@@ -178,25 +423,45 @@ contests.put('/:id', authMiddleware, contestAdminMiddleware, async (c) => {
     await c.env.DB.prepare(`UPDATE contests SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
   }
 
-  // Update problems if provided
+  // Update problems if provided (原子性:先删后插在同一 batch 中)
   if (body.problems && Array.isArray(body.problems)) {
-    await c.env.DB.prepare('DELETE FROM contest_problems WHERE contest_id = ?').bind(id).run();
+    const problemErr = await validateContestProblems(c.env.DB, body.problems);
+    if (problemErr) {
+      return c.json({ success: false, error: { message: problemErr, code: 'BAD_REQUEST' } }, 400);
+    }
+    const stmts = [c.env.DB.prepare('DELETE FROM contest_problems WHERE contest_id = ?').bind(id)];
     for (let i = 0; i < body.problems.length; i++) {
       const p = body.problems[i];
       const label = String.fromCharCode(65 + i);
-      await c.env.DB.prepare(
+      stmts.push(c.env.DB.prepare(
         'INSERT INTO contest_problems (contest_id, problem_id, label, score) VALUES (?, ?, ?, ?)'
-      ).bind(id, p.problem_id, p.label || label, p.score || 100).run();
+      ).bind(id, p.problem_id, p.label || label, p.score || 100));
     }
+    await c.env.DB.batch(stmts);
   }
+
+  await recordAuditLog(c, 'contest:update', user.userId, user.username);
 
   return c.json({ success: true, data: { message: 'Contest updated' } });
 });
 
 // Delete contest (admin only)
 contests.delete('/:id', authMiddleware, contestAdminMiddleware, async (c) => {
+  const user = c.get('user');
   const id = parseInt(c.req.param('id')!);
+
+  // 已结算的 Rated 比赛禁止删除:其 rating_changes/submissions.contest_id 为 ON DELETE SET NULL,
+  // 删除会导致 Rating 历史脱钩(用户 Rating 保留但无法追溯来源)
+  const contest: any = await c.env.DB.prepare('SELECT is_rated, rating_finalized FROM contests WHERE id = ?').bind(id).first();
+  if (!contest) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+  if (contest.is_rated === 1 && contest.rating_finalized === 1) {
+    return c.json({ success: false, error: { message: 'Cannot delete a contest whose ratings have been finalized', code: 'BAD_REQUEST' } }, 400);
+  }
+
   await c.env.DB.prepare('DELETE FROM contests WHERE id = ?').bind(id).run();
+  await recordAuditLog(c, 'contest:delete', user.userId, user.username);
   return c.json({ success: true, data: { message: 'Contest deleted' } });
 });
 
@@ -211,7 +476,8 @@ contests.get('/:id/problems', authMiddleware, async (c) => {
   }
 
   // Check if user is participant or admin
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1;
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
   const isParticipant = !!(await c.env.DB.prepare(
     'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
   ).bind(id, user.userId).first());
@@ -254,7 +520,8 @@ contests.get('/:id/problems/:slug', authMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
 
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1;
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
   const isParticipant = !!(await c.env.DB.prepare(
     'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
   ).bind(id, user.userId).first());
@@ -297,6 +564,13 @@ contests.post('/:id/register', authMiddleware, contestRegisterLimiter, async (c)
     return c.json({ success: false, error: { message: 'Contest has ended', code: 'BAD_REQUEST' } }, 400);
   }
 
+  // 私有比赛(is_public=0)仅管理员可报名,避免通过 API 绕过前端入口参加私有比赛
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
+  if ((contest as any).is_public !== 1 && !isAdmin) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
   const existing = await c.env.DB.prepare(
     'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
   ).bind(id, user.userId).first();
@@ -313,16 +587,32 @@ contests.post('/:id/register', authMiddleware, contestRegisterLimiter, async (c)
 });
 
 // Get contest rankings/leaderboard
-contests.get('/:id/rankings', async (c) => {
-  const id = parseInt(c.req.param('id'));
+contests.get('/:id/rankings', optionalAuthMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id')!);
 
   const contest = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
 
+  // 私有比赛(is_public=0)仅管理员或已报名参与者可见,避免按 ID 泄露
+  const user = c.get('user');
+  const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user?.permissions) && user.permissions.includes('contest_admin')));
+  if ((contest as any).is_public !== 1 && !isAdmin) {
+    const registered = user ? await c.env.DB.prepare(
+      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+    ).bind(id, user.userId).first() : null;
+    if (!registered) {
+      return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+    }
+  }
+
   const scoringType = normalizeScoringType((contest as any).scoring_type);
   const onlyVirtual = c.req.query('virtual') === '1';
+  // 排行榜分页(默认全量:pageSize=0 表示不分页)
+  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
+  const pageSize = Math.max(0, parseInt(c.req.query('pageSize') || '0'));
 
   // Get all participants (optionally only virtual)
   let participantsQuery = 'SELECT cp.user_id, cp.is_virtual, cp.virtual_start_time, u.username FROM contest_participants cp JOIN users u ON cp.user_id = u.id WHERE cp.contest_id = ?';
@@ -349,166 +639,69 @@ contests.get('/:id/rankings', async (c) => {
   // 封榜:比赛进行中且已进入冻结期(freeze_minutes 内)时,排行榜只统计冻结前的提交,
   // 冻结后的评测结果对排行榜不可见(比赛结束后自动解禁)
   const nowMs = Date.now();
-  const endMs = new Date((contest as any).end_time).getTime();
+  const endMs = parseContestTimeToMs((contest as any).end_time);
   const freezeMinutes = parseInt((contest as any).freeze_minutes) || 0;
   const freezeStartMs = endMs - freezeMinutes * 60000;
   const boardFrozen = effectiveContestStatus(contest) === 'running' && freezeMinutes > 0 && nowMs >= freezeStartMs;
-  const rankingEndTime = boardFrozen ? new Date(freezeStartMs).toISOString() : (contest as any).end_time;
+  const rankingEndTime = boardFrozen ? new Date(freezeStartMs).toISOString() : new Date(parseContestTimeToMs((contest as any).end_time)).toISOString();
 
-  // Use contest time window (or virtual start time + duration for virtual participants)
-  const allSubmissions = await c.env.DB.prepare(
-    `SELECT id, user_id, problem_id, status, score, time_used, created_at FROM submissions
+  // 按参与者类型取提交窗口:
+  // - 真实参赛者:使用比赛 [start_time, rankingEndTime](封榜时上限为冻结时间)
+  // - 虚拟参赛者:虚拟开始时间在比赛结束后,提交晚于 end_time,不能套用比赛时间窗
+  //   (否则 created_at <= end_time 会把虚拟提交全部过滤掉),故下限取最早的
+  //   virtual_start_time,上限为最早的 virtual_start + duration_minutes(若有时长设置)
+  let subLowerBound: string;
+  let subUpperBound: string | null;
+  if (onlyVirtual) {
+    const virtualStarts = participants.results
+      .map((p: any) => p.virtual_start_time)
+      .filter((v: any) => !!v)
+      .sort();
+    subLowerBound = virtualStarts[0] || (contest as any).start_time;
+    // 虚拟参赛时长限制:duration_minutes 设置后,提交窗口上限 = 最早虚拟开始时间 + 时长
+    const virtualDurationMinutes = parseInt((contest as any).duration_minutes) || 0;
+    if (virtualDurationMinutes > 0) {
+      const virtualEndMs = parseContestTimeToMs(subLowerBound) + virtualDurationMinutes * 60000;
+      subUpperBound = new Date(virtualEndMs).toISOString();
+    } else {
+      subUpperBound = null;
+    }
+  } else {
+    subLowerBound = (contest as any).start_time;
+    subUpperBound = rankingEndTime;
+  }
+
+  let subQuery = `SELECT id, user_id, problem_id, status, score, time_used, created_at FROM submissions
      WHERE user_id IN (${placeholders}) AND problem_id IN (${problemPlaceholders})
      AND contest_id = ?
      AND status != 'pending' AND status != 'running'
-     AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`
-  ).bind(...userIds, ...problemIds, id, (contest as any).start_time, rankingEndTime).all();
-
-  // Group submissions by user_id and problem_id
-  const bestSubs: Record<string, any> = {};
-  const lastSubs: Record<string, any> = {};   // OI: last submission per problem
-  const attemptCounts: Record<string, number> = {};
-  const firstAcceptedAt: Record<string, string> = {};
-
-  for (const sub of allSubmissions.results as any[]) {
-    const key = `${sub.user_id}:${sub.problem_id}`;
-    attemptCounts[key] = (attemptCounts[key] || 0) + 1;
-    // Find best submission (ICPC and IOI both use best score)
-    const existing = bestSubs[key];
-    if (!existing || sub.score > existing.score || (sub.score === existing.score && sub.time_used < existing.time_used)) {
-      bestSubs[key] = sub;
-    }
-    // OI: keep the latest submission (by created_at)
-    const prevLast = lastSubs[key];
-    if (!prevLast || new Date(sub.created_at) > new Date(prevLast.created_at)) {
-      lastSubs[key] = sub;
-    }
-    if (sub.status === 'accepted') {
-      if (!firstAcceptedAt[key] || new Date(sub.created_at) < new Date(firstAcceptedAt[key])) {
-        firstAcceptedAt[key] = sub.created_at;
-      }
-    }
+     AND datetime(created_at) >= datetime(?)`;
+  const subBinds: any[] = [...userIds, ...problemIds, id, subLowerBound];
+  if (subUpperBound) {
+    subQuery += ' AND datetime(created_at) <= datetime(?)';
+    subBinds.push(subUpperBound);
   }
+  const allSubmissions = await c.env.DB.prepare(subQuery).bind(...subBinds).all();
 
-  // Count wrong attempts before first accepted for penalty (ACM only)
-  const wrongBeforeAccepted: Record<string, number> = {};
-  for (const sub of allSubmissions.results as any[]) {
-    const key = `${sub.user_id}:${sub.problem_id}`;
-    if (firstAcceptedAt[key] && new Date(sub.created_at) <= new Date(firstAcceptedAt[key])) {
-      if (sub.status !== 'accepted') {
-        wrongBeforeAccepted[key] = (wrongBeforeAccepted[key] || 0) + 1;
-      }
-    }
-  }
-
-  const contestStartTime = new Date((contest as any).start_time).getTime();
+  // 计分核心复用共享函数 buildContestRankings(与 Rating 结算一致)
+  const contestStartTime = parseContestTimeToMs((contest as any).start_time);
 
   // Build per-participant virtual start time lookup (for virtual penalty calc)
   const virtualStartMap: Record<number, number> = {};
   for (const p of participants.results as any[]) {
     if (p.is_virtual && p.virtual_start_time) {
-      virtualStartMap[p.user_id] = new Date(p.virtual_start_time).getTime();
+      virtualStartMap[p.user_id] = parseContestTimeToMs(p.virtual_start_time);
     }
   }
 
-  // Build rankings
-  const rankings: any[] = [];
-  for (const participant of participants.results) {
-    const userId = (participant as any).user_id;
-    const username = (participant as any).username;
-    let totalScore = 0;
-    let acceptedCount = 0;
-    let totalPenalty = 0; // penalty in minutes
-    const problemResults: any = {};
-
-    for (const cp of contestProblems.results) {
-      const problemId = (cp as any).problem_id;
-      const label = (cp as any).label;
-      const score = (cp as any).score;
-      const key = `${userId}:${problemId}`;
-      const bestSub = bestSubs[key];
-      const attempts = attemptCounts[key] || 0;
-      const wrongAttempts = wrongBeforeAccepted[key] || 0;
-
-      if (bestSub) {
-        if (scoringType === 'oi') {
-          // OI: last submission counts, scored by test points
-          const lastSub = lastSubs[key];
-          problemResults[label] = {
-            status: lastSub ? lastSub.status : bestSub.status,
-            score: lastSub ? (lastSub.score || 0) : 0,
-            time_used: lastSub ? (lastSub.time_used || 0) : 0,
-            attempts,
-            wrong_attempts: 0,
-          };
-          totalScore += lastSub ? (lastSub.score || 0) : 0;
-        } else if (scoringType === 'ioi') {
-          // IOI: best score across all attempts, no penalty
-          problemResults[label] = {
-            status: bestSub.status,
-            score: bestSub.score || 0,
-            time_used: bestSub.time_used || 0,
-            attempts,
-            wrong_attempts: wrongAttempts,
-          };
-          totalScore += bestSub.score || 0;
-          if (bestSub.status === 'accepted') acceptedCount++;
-        } else {
-          // ICPC: best score, penalty on AC
-          problemResults[label] = {
-            status: bestSub.status,
-            score: bestSub.score || 0,
-            time_used: bestSub.time_used || 0,
-            attempts,
-            wrong_attempts: wrongAttempts,
-          };
-          if (bestSub.status === 'accepted') {
-            acceptedCount++;
-            totalScore += bestSub.score || score;
-            const acTime = new Date(firstAcceptedAt[key]).getTime();
-            // For virtual participants, use their virtual start time as base
-            const baseTime = virtualStartMap[userId] || contestStartTime;
-            const timeFromStart = Math.floor((acTime - baseTime) / 60000);
-            totalPenalty += timeFromStart + wrongAttempts * 20;
-          } else {
-            totalScore += bestSub.score || 0;
-          }
-        }
-      } else {
-        problemResults[label] = null;
-      }
-    }
-
-    rankings.push({
-      user_id: userId,
-      username,
-      is_virtual: (participant as any).is_virtual || 0,
-      virtual_start_time: (participant as any).virtual_start_time || null,
-      total_score: totalScore,
-      accepted_count: acceptedCount,
-      total_penalty: totalPenalty,
-      problems: problemResults,
-    });
-  }
-
-  rankings.sort((a, b) => {
-    if (b.total_score !== a.total_score) return b.total_score - a.total_score;
-    return a.total_penalty - b.total_penalty;
+  const rankings = buildContestRankings({
+    submissions: allSubmissions.results as any[],
+    participants: participants.results as any[],
+    contestProblems: contestProblems.results as any[],
+    scoringType,
+    contestStartTime,
+    virtualStartMap,
   });
-
-  // Assign ranks (1-based; ties share rank, next rank skips)
-  let prevScore: number | null = null;
-  let prevPenalty: number | null = null;
-  let prevRank = 0;
-  for (let i = 0; i < rankings.length; i++) {
-    const r = rankings[i];
-    if (prevScore === null || r.total_score !== prevScore || r.total_penalty !== prevPenalty) {
-      prevRank = i + 1;
-    }
-    r.rank = prevRank;
-    prevScore = r.total_score;
-    prevPenalty = r.total_penalty;
-  }
 
   // OI 赛制赛时:隐藏每题得分/状态,保留排名(比赛结束后自动解禁)
   const oiRunning = scoringType === 'oi' && effectiveContestStatus(contest) === 'running';
@@ -526,16 +719,32 @@ contests.get('/:id/rankings', async (c) => {
     }
   }
 
+  // 排行榜分页:pageSize > 0 时按页切片,否则全量返回
+  const totalRankings = rankings.length;
+  let pageRankings = rankings;
+  let pagination: any = null;
+  if (pageSize > 0) {
+    const offset = (page - 1) * pageSize;
+    pageRankings = rankings.slice(offset, offset + pageSize);
+    pagination = {
+      page,
+      pageSize,
+      total: totalRankings,
+      totalPages: Math.max(1, Math.ceil(totalRankings / pageSize)),
+    };
+  }
+
   return c.json({
     success: true,
     data: {
-      rankings,
+      rankings: pageRankings,
       problems: contestProblems.results,
       scoring_type: scoringType,
       is_rated: (contest as any).is_rated || 0,
       rating_finalized: (contest as any).rating_finalized || 0,
       result_hidden: oiRunning ? 1 : 0,
       board_frozen: boardFrozen ? 1 : 0,
+      pagination,
     },
   });
 });
@@ -545,11 +754,11 @@ contests.get('/:id/registration', authMiddleware, async (c) => {
   const user = c.get('user');
   const id = parseInt(c.req.param('id')!);
 
-  const registered = !!(await c.env.DB.prepare(
-    'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
-  ).bind(id, user.userId).first());
+  const reg: any = await c.env.DB.prepare(
+    'SELECT id, is_virtual FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+  ).bind(id, user.userId).first();
 
-  return c.json({ success: true, data: { registered } });
+  return c.json({ success: true, data: { registered: !!reg, is_virtual: !!(reg && reg.is_virtual) } });
 });
 
 // Get current user's problem status in contest
@@ -560,6 +769,18 @@ contests.get('/:id/my-status', authMiddleware, async (c) => {
   const contest = await c.env.DB.prepare('SELECT * FROM contests WHERE id = ?').bind(id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 与 problems 接口一致:运行中仅报名者(或管理员)可查看个人状态,避免未报名用户枚举题目标签
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
+  if (effectiveContestStatus(contest) === 'running' && !isAdmin) {
+    const registered = await c.env.DB.prepare(
+      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+    ).bind(id, user.userId).first();
+    if (!registered) {
+      return c.json({ success: false, error: { message: 'You must register for this contest first', code: 'FORBIDDEN' } }, 403);
+    }
   }
 
   const contestProblems = await c.env.DB.prepare(
@@ -573,13 +794,34 @@ contests.get('/:id/my-status', authMiddleware, async (c) => {
   const problemIds = contestProblems.results.map((p: any) => p.problem_id);
   const problemPlaceholders = problemIds.map(() => '?').join(',');
 
+  // 查询该用户报名记录(虚拟参赛者用虚拟开始时间窗口)
+  const participant = await c.env.DB.prepare(
+    'SELECT is_virtual, virtual_start_time FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+  ).bind(id, user.userId).first();
+
+  let subLower: string;
+  let subUpper: string;
+  if ((participant as any)?.is_virtual) {
+    // 虚拟参赛者:提交窗口 = [virtual_start_time, virtual_start_time + duration_minutes](有时长时)
+    const vStart = parseContestTimeToMs((participant as any).virtual_start_time);
+    if (!isFinite(vStart)) {
+      return c.json({ success: true, data: { problems: {} } });
+    }
+    const vDuration = parseInt((contest as any).duration_minutes) || 0;
+    subLower = new Date(vStart).toISOString();
+    subUpper = vDuration > 0 ? new Date(vStart + vDuration * 60000).toISOString() : new Date().toISOString();
+  } else {
+    subLower = (contest as any).start_time;
+    subUpper = (contest as any).end_time;
+  }
+
   const submissions = await c.env.DB.prepare(
     `SELECT problem_id, status, score FROM submissions
      WHERE user_id = ? AND problem_id IN (${problemPlaceholders})
      AND contest_id = ?
      AND status != 'pending' AND status != 'running'
      AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`
-  ).bind(user.userId, ...problemIds, id, (contest as any).start_time, (contest as any).end_time).all();
+  ).bind(user.userId, ...problemIds, id, subLower, subUpper).all();
 
   // Build per-problem status
   const problemStatus: Record<string, { status: string; score: number; best_score: number }> = {};
@@ -629,6 +871,13 @@ contests.post('/:id/virtual-register', authMiddleware, virtualRegisterLimiter, a
 
   if ((contest as any).allow_virtual !== 1) {
     return c.json({ success: false, error: { message: 'Virtual participation is disabled for this contest', code: 'FORBIDDEN' } }, 403);
+  }
+
+  // 私有比赛(is_public=0)仅管理员可虚拟参赛,避免通过 API 绕过前端入口
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'));
+  if ((contest as any).is_public !== 1 && !isAdmin) {
+    return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
 
   // Virtual participation only makes sense for ended contests
@@ -682,17 +931,18 @@ contests.post('/:id/finalize', authMiddleware, adminMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'Ratings have already been finalized', code: 'BAD_REQUEST' } }, 400);
   }
 
-  // Fetch rankings (re-use rankings logic by calling internal fetch)
-  // Note: we only consider non-virtual participants for rating.
+  // Fetch non-virtual participants for rating (same shape as rankings endpoint,
+  // so we can reuse the shared scoring core buildContestRankings)
   const participants = await c.env.DB.prepare(
-    'SELECT cp.user_id FROM contest_participants cp WHERE cp.contest_id = ? AND cp.is_virtual = 0'
+    `SELECT cp.user_id, cp.is_virtual, cp.virtual_start_time, u.username
+     FROM contest_participants cp JOIN users u ON cp.user_id = u.id
+     WHERE cp.contest_id = ? AND cp.is_virtual = 0`
   ).bind(id).all();
 
   if (participants.results.length === 0) {
     return c.json({ success: false, error: { message: 'No participants to rate', code: 'BAD_REQUEST' } }, 400);
   }
 
-  // Re-run the rankings computation by querying submissions directly (simplified)
   const contestProblems = await c.env.DB.prepare(
     'SELECT cp.label, cp.problem_id, cp.score FROM contest_problems cp WHERE cp.contest_id = ? ORDER BY cp.label'
   ).bind(id).all();
@@ -703,43 +953,38 @@ contests.post('/:id/finalize', authMiddleware, adminMiddleware, async (c) => {
   const problemPlaceholders = problemIds.map(() => '?').join(',');
 
   const allSubmissions = await c.env.DB.prepare(
-    `SELECT id, user_id, problem_id, status, score, created_at FROM submissions
+    `SELECT id, user_id, problem_id, status, score, time_used, created_at FROM submissions
      WHERE user_id IN (${placeholders}) AND problem_id IN (${problemPlaceholders})
      AND status != 'pending' AND status != 'running'
      AND datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)`
   ).bind(...userIds, ...problemIds, (contest as any).start_time, (contest as any).end_time).all();
 
-  // Compute per-user total score (use best score per problem)
-  const bestScoreByKey: Record<string, number> = {};
-  for (const sub of allSubmissions.results as any[]) {
-    const key = `${sub.user_id}:${sub.problem_id}`;
-    const cur = bestScoreByKey[key] ?? -1;
-    if (sub.score > cur) bestScoreByKey[key] = sub.score;
-  }
-
-  // Build (user_id, score, rank)
-  const userScores: { user_id: number; score: number }[] = [];
+  // 复用排行榜计分核心,保证 Rating 结算排名与排行榜一致
+  // (ICPC 罚时 / OI 最后一次提交 / IOI 最高分)
+  const finalizeStartTime = parseContestTimeToMs((contest as any).start_time);
+  const finalizeVirtualMap: Record<number, number> = {};
   for (const p of participants.results as any[]) {
-    let total = 0;
-    for (const cp of contestProblems.results as any[]) {
-      const key = `${p.user_id}:${cp.problem_id}`;
-      total += bestScoreByKey[key] ?? 0;
+    if (p.is_virtual && p.virtual_start_time) {
+      finalizeVirtualMap[p.user_id] = parseContestTimeToMs(p.virtual_start_time);
     }
-    userScores.push({ user_id: p.user_id, score: total });
   }
+  const finalizeRankings = buildContestRankings({
+    submissions: allSubmissions.results as any[],
+    participants: participants.results as any[],
+    contestProblems: contestProblems.results as any[],
+    scoringType: normalizeScoringType((contest as any).scoring_type),
+    contestStartTime: finalizeStartTime,
+    virtualStartMap: finalizeVirtualMap,
+  });
 
-  // Sort by score desc; assign ranks (ties share rank)
-  userScores.sort((a, b) => b.score - a.score);
-  let prevScore: number | null = null;
-  let prevRank = 0;
-  const ranked: { user_id: number; rank: number }[] = [];
-  for (let i = 0; i < userScores.length; i++) {
-    const us = userScores[i];
-    if (prevScore === null || us.score !== prevScore) {
-      prevRank = i + 1;
-    }
-    ranked.push({ user_id: us.user_id, rank: prevRank });
-    prevScore = us.score;
+  // 只保留有提交的参与者(未提交代码的不计入 Rating 结算)
+  const submittedUserIds = new Set((allSubmissions.results as any[]).map((s: any) => s.user_id));
+  const ranked: { user_id: number; rank: number }[] = finalizeRankings
+    .filter((r: any) => submittedUserIds.has(r.user_id))
+    .map((r: any) => ({ user_id: r.user_id, rank: r.rank }));
+
+  if (ranked.length === 0) {
+    return c.json({ success: false, error: { message: 'No participants with submissions to rate', code: 'BAD_REQUEST' } }, 400);
   }
 
   // Fetch pre-contest ratings for all participants
@@ -777,33 +1022,53 @@ contests.post('/:id/finalize', authMiddleware, adminMiddleware, async (c) => {
   // Compute changes
   const changes = computeContestRatingChanges(ratingParticipants, pastRatingsMap);
 
-  // Persist changes in a single batch (D1 supports sequential prepared statements)
+  // 原子抢占结算标记:条件更新保证并发请求仅一个能通过(另一个直接返回已结算)
+  const claimResult = await c.env.DB.prepare(
+    'UPDATE contests SET rating_finalized = 1 WHERE id = ? AND rating_finalized = 0'
+  ).bind(id).run();
+  if ((claimResult as any).meta.changes === 0) {
+    return c.json({ success: false, error: { message: 'Ratings have already been finalized', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  // 收集全部写语句,放入同一 D1 batch 原子执行(避免中途失败留下半成品)
   const rankByUser = new Map<number, number>();
   for (const r of ranked) rankByUser.set(r.user_id, r.rank);
 
+  const stmts: D1PreparedStatement[] = [];
   for (const ch of changes) {
-    await c.env.DB.prepare(
+    stmts.push(c.env.DB.prepare(
       'INSERT INTO rating_changes (user_id, contest_id, old_rating, new_rating, delta, reason) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(ch.user_id, id, ch.old_rating, ch.new_rating, ch.delta, `Contest #${id} finalization`).run();
+    ).bind(ch.user_id, id, ch.old_rating, ch.new_rating, ch.delta, `Contest #${id} finalization`));
 
-    // Upsert user_ratings
+    // Upsert user_ratings (UNIQUE(user_id))
     const existing = await c.env.DB.prepare('SELECT user_id FROM user_ratings WHERE user_id = ?').bind(ch.user_id).first();
     if (existing) {
-      await c.env.DB.prepare(
+      stmts.push(c.env.DB.prepare(
         'UPDATE user_ratings SET rating = ?, max_rating = MAX(max_rating, ?), updated_at = datetime("now") WHERE user_id = ?'
-      ).bind(ch.new_rating, ch.new_rating, ch.user_id).run();
+      ).bind(ch.new_rating, ch.new_rating, ch.user_id));
     } else {
-      await c.env.DB.prepare(
+      stmts.push(c.env.DB.prepare(
         'INSERT INTO user_ratings (user_id, rating, max_rating) VALUES (?, ?, ?)'
-      ).bind(ch.user_id, ch.new_rating, ch.new_rating).run();
+      ).bind(ch.user_id, ch.new_rating, ch.new_rating));
     }
 
     // Write final_rank + final_rating_delta into contest_participants
-    await c.env.DB.prepare(
+    stmts.push(c.env.DB.prepare(
       'UPDATE contest_participants SET final_rank = ?, final_rating_delta = ? WHERE contest_id = ? AND user_id = ? AND is_virtual = 0'
-    ).bind(rankByUser.get(ch.user_id) ?? null, ch.delta, id, ch.user_id).run();
+    ).bind(rankByUser.get(ch.user_id) ?? null, ch.delta, id, ch.user_id));
+  }
 
-    // Notify the user
+  try {
+    // 原子写入全部结算数据
+    await c.env.DB.batch(stmts);
+  } catch (e) {
+    // 写入失败:回滚抢占标记,允许重试
+    await c.env.DB.prepare('UPDATE contests SET rating_finalized = 0 WHERE id = ?').bind(id).run();
+    throw e;
+  }
+
+  // 通知用户(batch 成功后发送,失败不影响结算结果)
+  for (const ch of changes) {
     await sendNotification(
       c.env.DB,
       ch.user_id,
@@ -813,9 +1078,6 @@ contests.post('/:id/finalize', authMiddleware, adminMiddleware, async (c) => {
       `/contests/${id}`
     );
   }
-
-  // Mark contest as finalized
-  await c.env.DB.prepare('UPDATE contests SET rating_finalized = 1 WHERE id = ?').bind(id).run();
 
   return c.json({
     success: true,
@@ -833,12 +1095,25 @@ contests.post('/:id/finalize', authMiddleware, adminMiddleware, async (c) => {
 });
 
 // GET /contests/:id/rating-changes — list rating changes for a finalized contest
-contests.get('/:id/rating-changes', async (c) => {
-  const id = parseInt(c.req.param('id'));
+contests.get('/:id/rating-changes', optionalAuthMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id')!);
 
-  const contest = await c.env.DB.prepare('SELECT id, title, rating_finalized FROM contests WHERE id = ?').bind(id).first();
+  const contest: any = await c.env.DB.prepare('SELECT id, title, rating_finalized, is_public FROM contests WHERE id = ?').bind(id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 私有比赛(is_public=0)仅管理员或已报名参与者可见,避免按 ID 泄露 Rating 历史
+  const user = c.get('user');
+  const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user?.permissions) && user.permissions.includes('contest_admin')));
+  if (contest.is_public !== 1 && !isAdmin) {
+    const registered = user ? await c.env.DB.prepare(
+      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+    ).bind(id, user.userId).first() : null;
+    if (!registered) {
+      return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+    }
   }
 
   const results = await c.env.DB.prepare(
@@ -867,13 +1142,26 @@ contests.get('/:id/rating-changes', async (c) => {
 // 赛时公告
 // ============================================================
 
-// GET /contests/:id/announcements — 公告列表(公开)
-contests.get('/:id/announcements', async (c) => {
-  const id = parseInt(c.req.param('id'));
+// GET /contests/:id/announcements — 公告列表(公开;私有比赛仅管理员/参与者可见)
+contests.get('/:id/announcements', optionalAuthMiddleware, async (c) => {
+  const id = parseInt(c.req.param('id')!);
 
-  const contest = await c.env.DB.prepare('SELECT id FROM contests WHERE id = ?').bind(id).first();
+  const contest: any = await c.env.DB.prepare('SELECT id, is_public FROM contests WHERE id = ?').bind(id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 私有比赛(is_public=0)仅管理员或已报名参与者可见,避免按 ID 泄露
+  const user = c.get('user');
+  const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+    || (Array.isArray(user?.permissions) && user.permissions.includes('contest_admin')));
+  if (contest.is_public !== 1 && !isAdmin) {
+    const registered = user ? await c.env.DB.prepare(
+      'SELECT id FROM contest_participants WHERE contest_id = ? AND user_id = ?'
+    ).bind(id, user.userId).first() : null;
+    if (!registered) {
+      return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
+    }
   }
 
   const results = await c.env.DB.prepare(
@@ -1002,10 +1290,12 @@ contests.post('/:id/clarifications', authMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'question must be at most 2000 characters', code: 'BAD_REQUEST' } }, 400);
   }
 
-  const contest: any = await c.env.DB.prepare('SELECT id, status FROM contests WHERE id = ?').bind(id).first();
+  const contest: any = await c.env.DB.prepare('SELECT id, start_time, end_time FROM contests WHERE id = ?').bind(id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
+  // 按当前时间动态判定:必须查询 start_time/end_time 才能正确计算状态,
+  // 否则 effectiveContestStatus 会因字段缺失恒返回 'upcoming'(比赛开始后仍误报"未开始")
   if (effectiveContestStatus(contest) === 'upcoming') {
     return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
   }

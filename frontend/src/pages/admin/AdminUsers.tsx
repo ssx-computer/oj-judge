@@ -201,7 +201,7 @@ export default function AdminUsers() {
             <div className="user-info">
               <span className="user-name">
                 {u.username}
-                {u.banned && <span className="user-banned-badge">{t('admin.banned')}</span>}
+                {!!u.banned && <span className="user-banned-badge">{t('admin.banned')}</span>}
               </span>
               <span className="user-role-badge" style={{ color: u.role === 'admin' ? '#ef4444' : '#3b82f6' }}>
                 {u.role === 'admin' ? <Shield size={14} /> : <User size={14} />}

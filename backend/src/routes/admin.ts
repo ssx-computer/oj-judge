@@ -235,7 +235,9 @@ admin.get('/contests', authMiddleware, contestAdminMiddleware, async (c) => {
   const countResult = await c.env.DB.prepare('SELECT COUNT(*) as total FROM contests').first();
   const total = (countResult as any)?.total || 0;
   const results = await c.env.DB.prepare(
-    'SELECT c.*, u.username as creator_name FROM contests c JOIN users u ON c.created_by = u.id ORDER BY c.id DESC LIMIT ? OFFSET ?'
+    `SELECT c.*, u.username as creator_name,
+            (SELECT COUNT(*) FROM contest_participants cp WHERE cp.contest_id = c.id) as participant_count
+     FROM contests c JOIN users u ON c.created_by = u.id ORDER BY c.id DESC LIMIT ? OFFSET ?`
   ).bind(pageSize, offset).all();
 
   return c.json({

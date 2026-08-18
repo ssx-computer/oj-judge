@@ -59,42 +59,42 @@
 }
 
 [data-theme-style="default"][data-theme="light"] {
-  --bg-primary: #f8fafc;
+  --bg-primary: #f6f2ea;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f1f5f9;
+  --bg-tertiary: #f9fafa;
   --bg-card: #ffffff;
-  --bg-card-hover: #f8fafc;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
-  --text-tertiary: #64748b;
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-light: rgba(79, 70, 229, 0.08);
-  --accent-glow: rgba(79, 70, 229, 0.2);
-  --success: #16a34a;
-  --success-bg: rgba(22, 163, 74, 0.08);
-  --warning: #d97706;
-  --warning-bg: rgba(217, 119, 6, 0.08);
-  --error: #dc2626;
-  --error-bg: rgba(220, 38, 38, 0.08);
-  --info: #2563eb;
-  --info-bg: rgba(37, 99, 235, 0.08);
-  --border: #e2e8f0;
-  --border-light: #cbd5e1;
-  --border-hover: #94a3b8;
-  --gold: #b45309;
-  --gold-bg: rgba(180, 83, 9, 0.08);
-  --silver: #64748b;
-  --silver-bg: rgba(100, 116, 139, 0.06);
-  --bronze: #92400e;
-  --bronze-bg: rgba(146, 64, 14, 0.08);
-  --shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-  --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.1);
-  --shadow-accent: 0 0 20px rgba(79, 70, 229, 0.1);
-  --shadow-card: 0 8px 28px rgba(0, 0, 0, 0.08);
+  --bg-card-hover: #f8f9fa;
+  --text-primary: #1f242c;
+  --text-secondary: #5e6b7f;
+  --text-muted: #8493a6;
+  --text-tertiary: #586b83;
+  --accent: #1864ab;
+  --accent-hover: #104e8b;
+  --accent-light: rgba(24, 100, 171, 0.08);
+  --accent-glow: rgba(24, 100, 171, 0.15);
+  --success: #2da44e;
+  --success-bg: rgba(45, 164, 78, 0.08);
+  --warning: #a06d09;
+  --warning-bg: rgba(160, 109, 9, 0.08);
+  --error: #cf222e;
+  --error-bg: rgba(207, 34, 46, 0.08);
+  --info: #0969da;
+  --info-bg: rgba(9, 105, 218, 0.08);
+  --border: #e7ebf0;
+  --border-light: #f0f6fc;
+  --border-hover: #d0d7de;
+  --gold: #b08307;
+  --gold-bg: rgba(176, 131, 7, 0.08);
+  --silver: #626b79;
+  --silver-bg: rgba(98, 107, 121, 0.06);
+  --bronze: #8b5a0b;
+  --bronze-bg: rgba(139, 90, 11, 0.08);
+  --shadow: 0 0 0 1px var(--border);
+  --shadow-sm: 0 0 0 1px var(--border);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-accent: none;
+  --shadow-card: 0 0 0 1px var(--border);
 }
 
 /* ═══════════════════════════════════════════════════

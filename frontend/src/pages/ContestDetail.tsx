@@ -6,6 +6,7 @@ import { useToastStore } from '../store/toast';
 import RatingBadge from '../components/RatingBadge';
 import { SkeletonTable } from '../components/Skeleton';
 import { getRatingColor } from '../utils/rating';
+import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
 import { Trophy, Calendar, Users, ChevronRight, UserPlus, CheckCircle, Clock, Eye, MessageSquare, BookOpen, Timer, Edit3, XCircle, AlertCircle, Play, Sparkles, TrendingUp, TrendingDown, Bell, Plus, Send, X } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -16,6 +17,14 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
   running: 'badge badge-success',
   ended: 'badge badge-ended',
 };
+
+const STATUS_ICON: Record<string, any> = {
+  upcoming: Clock,
+  running: Play,
+  ended: CheckCircle,
+};
+
+const RANKINGS_PAGE_SIZE = 50;
 
 function formatPenalty(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -39,11 +48,15 @@ export default function ContestDetail() {
   const { user } = useAuthStore();
   const addToast = useToastStore((s) => s.addToast);
   const [contest, setContest] = useState<any>(null);
+  const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
+  const [serverStatus, setServerStatus] = useState<string>('');
   const [problems, setProblems] = useState<any[]>([]);
   const [rankings, setRankings] = useState<any[]>([]);
   const [rankingProblems, setRankingProblems] = useState<any[]>([]);
   const [rankingsMeta, setRankingsMeta] = useState<any>({});
+  const [rankingsPagination, setRankingsPagination] = useState<{ page: number; pageSize: number; total: number; totalPages: number } | null>(null);
   const [registered, setRegistered] = useState(false);
+  const [virtualParticipant, setVirtualParticipant] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [activeTab, setActiveTab] = useState<'problems' | 'rankings' | 'review' | 'announcements' | 'clarifications'>('problems');
@@ -64,6 +77,7 @@ export default function ContestDetail() {
   const [isTeamManager, setIsTeamManager] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endedRefreshDone = useRef(false);
+  const startedRefreshDone = useRef(false);
   useDocumentTitle(contest?.title, contest?.description ? contest.description.slice(0, 150) : undefined);
 
   // 团队比赛模式下加载当前用户的团队管理权限(owner/admin 或 can_edit_contests)
@@ -175,15 +189,31 @@ export default function ContestDetail() {
         ? await api.getTeamContest(Number(teamId), Number(matchId))
         : await api.getContest(Number(id));
       setContest(data.contest);
+      // server_time offset: server_time - local_now
+      if (data.server_time) {
+        const serverMs = new Date(data.server_time).getTime();
+        setServerOffsetMs(serverMs - Date.now());
+      }
+      // 服务端动态计算的状态(官方赛与团队赛均已返回),getStatus 优先使用
+      setServerStatus(data.effective_status || '');
       if (isTeamMatch) {
         setProblems(data.problems || []);
         setRegistered(!!data.is_registered);
-      } else if (user) {
-        try {
-          const regData = await api.checkContestRegistration(Number(id));
-          setRegistered(regData.registered);
-        } catch {
-          // ignore
+      } else {
+        setRegistered(!!data.is_registered);
+        setVirtualParticipant(!!data.is_virtual);
+        // If backend indicates problems are visible, fetch problems; otherwise clear
+        if (data.problems && Array.isArray(data.problems)) {
+          setProblems(data.problems);
+        } else if (data.problems_visible) {
+          try {
+            const p: any = await api.getContestProblems(Number(id));
+            setProblems(p.problems || []);
+          } catch {
+            setProblems([]);
+          }
+        } else {
+          setProblems([]);
         }
       }
     } catch (e: any) {
@@ -220,29 +250,51 @@ export default function ContestDetail() {
     }
   }, [id, teamId, matchId, user, isTeamMatch]);
 
-  const fetchRankings = useCallback(async () => {
+  const fetchRankings = useCallback(async (page = 1, fetchAll = false) => {
     try {
       if (isTeamMatch) {
-        // 团队比赛排行榜接口只返回 rankings,题目列表从 contest problems 取
+        // 团队比赛排行榜接口只返回 rankings，题目列表从 contest problems 取
         const data: any = await api.getTeamContestRankings(Number(teamId), Number(matchId));
         setRankings(data.rankings || []);
         setRankingProblems(problems.map((p: any) => ({ label: p.label || '', score: p.score })));
-        setRankingsMeta({});
+        // result_hidden: OI 赛制赛时后端已隐藏得分，前端据此显示 '-' 占位
+        setRankingsMeta({ result_hidden: data.result_hidden || 0 });
       } else {
-        const data: any = await api.getContestRankings(Number(id));
-        setRankings(data.rankings);
+        // fetchAll=true(如 Review tab 最终排名) 时请求全量 (pageSize=0)，保证榜单完整
+        // 虚拟参赛者查看排行榜时传 virtual=1，显示虚拟排名 (普通榜单默认排除虚拟者)
+        // 仅在比赛进行中或已结束且允许虚拟时才传 virtual 参数
+        let hasVirtual = virtualParticipant && !fetchAll;
+        if (hasVirtual) {
+          const start = parseContestTimeToMs(contest.start_time);
+          const end = parseContestTimeToMs(contest.end_time);
+          const now = Date.now() + serverOffsetMs;
+          // 只有在进行中才显示虚拟排名
+          hasVirtual = now >= start && now < end;
+        }
+          
+        const data: any = await api.getContestRankings(
+          Number(id), 
+          page, 
+          fetchAll ? 0 : RANKINGS_PAGE_SIZE, 
+          hasVirtual ? 1 : 0
+        );
+        setRankings(data.rankings || []);
         setRankingProblems(data.problems || []);
         setRankingsMeta({
           scoring_type: data.scoring_type,
           is_rated: data.is_rated,
           rating_finalized: data.rating_finalized,
           board_frozen: data.board_frozen,
+          result_hidden: data.result_hidden,
         });
+        setRankingsPagination(data.pagination || null);
       }
     } catch (e: any) {
-      setLoadError(e.message || t('common.error'));
+      // 排行榜请求失败 (如非成员/未开始) 不应覆盖整页，仅清空榜单
+      setRankings([]);
+      setRankingProblems([]);
     }
-  }, [id, teamId, matchId, isTeamMatch, problems]);
+  }, [id, teamId, matchId, isTeamMatch, problems, virtualParticipant, contest, serverOffsetMs]);
 
   const fetchRatingChanges = useCallback(async () => {
     if (isTeamMatch) return;
@@ -255,15 +307,25 @@ export default function ContestDetail() {
   }, [id, isTeamMatch]);
 
   const getStatus = useCallback((): string => {
-    // 按当前时间动态计算,与后端 effectiveContestStatus 保持一致
-    // (避免依赖可能过期的 contest.status 静态字段导致状态误判)
-    const now = Date.now();
-    const start = new Date(contest.start_time).getTime();
-    const end = new Date(contest.end_time).getTime();
+    // 以服务端时间为准：优先使用后端返回的 effective_status
+    if (serverStatus === 'upcoming' || serverStatus === 'running' || serverStatus === 'ended') {
+      return serverStatus;
+    }
+    // 兜底 (接口未返回时):本地按 UTC 解析 + serverOffsetMs 校正，与后端一致
+    const now = Date.now() + serverOffsetMs;
+    const start = parseContestTimeToMs(contest.start_time);
+    const end = parseContestTimeToMs(contest.end_time);
+      
+    // 更严格的状态判断边界条件
+    if (start > end) {
+        console.error('Invalid contest time range:', contest.start_time, contest.end_time);
+        return 'ended';
+    }
+      
     if (now < start) return 'upcoming';
     if (now >= start && now < end) return 'running';
     return 'ended';
-  }, [contest]);
+  }, [contest, serverOffsetMs, serverStatus]);
 
   useEffect(() => {
     if (!id && !isTeamMatch) return;
@@ -277,11 +339,11 @@ export default function ContestDetail() {
   // Countdown timer
   useEffect(() => {
     if (!contest) return;
-
-    const start = new Date(contest.start_time).getTime();
-    const end = new Date(contest.end_time).getTime();
-    const now = Date.now();
-
+  
+    const start = parseContestTimeToMs(contest.start_time);
+    const end = parseContestTimeToMs(contest.end_time);
+    const now = Date.now() + serverOffsetMs;
+  
     // Contest already ended — no ticking interval needed.
     // Do a single one-time refresh to pick up the finalized "ended" status,
     // but only if the backend hasn't already marked it as ended.
@@ -296,13 +358,21 @@ export default function ContestDetail() {
       }
       return;
     }
-
+  
     const updateCountdown = () => {
-      const now = Date.now();
-      if (now < start) {
-        setCountdown(`${t('contests.upcoming')} ${formatCountdown(start - now)}`);
-      } else if (now >= start && now < end) {
-        setCountdown(formatCountdown(end - now));
+      // 以服务端时间为准：与 getStatus 一致使用 serverOffsetMs 校正本地时钟
+      const currentNow = Date.now() + serverOffsetMs;
+          
+      if (currentNow < start) {
+        setCountdown(`${t('contests.upcoming')} ${formatCountdown(start - currentNow)}`);
+      } else if (currentNow >= start && currentNow < end) {
+        setCountdown(formatCountdown(end - currentNow));
+        // 开赛瞬间：刷新一次服务端状态，使 serverStatus 从 upcoming 变为 running
+        // (否则提前打开页面后到开赛时间仍显示未开始)
+        if (!startedRefreshDone.current) {
+          startedRefreshDone.current = true;
+          fetchContest();
+        }
       } else {
         setCountdown(t('contests.ended'));
         if (timerRef.current) {
@@ -316,14 +386,17 @@ export default function ContestDetail() {
         }
       }
     };
-
+  
     updateCountdown();
-    timerRef.current = setInterval(updateCountdown, 1000);
-
+    // Only start countdown tick if contest is upcoming or running
+    if (status === 'upcoming' || status === 'running') {
+      timerRef.current = setInterval(updateCountdown, 1000);
+    }
+  
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [contest, fetchContest]);
+  }, [contest, fetchContest, serverOffsetMs, status]);
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
@@ -334,7 +407,7 @@ export default function ContestDetail() {
       fetchRankings();
     } else if (activeTab === 'review') {
       fetchProblems();
-      fetchRankings();
+      fetchRankings(1, true); // Review 最终排名需全量榜单
       fetchRatingChanges();
     }
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -343,11 +416,14 @@ export default function ContestDetail() {
   // Auto-refresh rankings during running contest
   useEffect(() => {
     if ((!id && !isTeamMatch) || !contest || activeTab !== 'rankings') return;
-    const status = contest.status || getStatus();
+    const status = getStatus();
+    // Only auto-refresh when the contest is actively running (not upcoming or ended)
     if (status !== 'running') return;
-    const interval = setInterval(fetchRankings, 15000); // refresh every 15s
+    
+    // Refresh every 15s during running contest
+    const interval = setInterval(() => fetchRankings(rankingsPagination?.page || 1), 15000);
     return () => clearInterval(interval);
-  }, [activeTab, id, isTeamMatch, contest, fetchRankings, getStatus]);
+  }, [activeTab, id, isTeamMatch, contest, fetchRankings, getStatus, rankingsPagination]);
 
   const handleRegister = async () => {
     if (!user || registering) return;
@@ -358,7 +434,17 @@ export default function ContestDetail() {
       } else {
         await api.registerContest(Number(id));
       }
-      setRegistered(true);
+      // Confirm registration status from server to avoid race conditions
+      if (isTeamMatch) {
+        setRegistered(true);
+      } else {
+        try {
+          const regData = await api.checkContestRegistration(Number(id));
+          setRegistered(!!regData.registered);
+        } catch {
+          setRegistered(true);
+        }
+      }
       // 报名成功后:清除报名前访问题目留下的 403 错误,并重新加载题目/状态
       setLoadError('');
       await fetchContest();
@@ -424,7 +510,7 @@ export default function ContestDetail() {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString();
+    return formatContestTime(dateStr);
   };
 
   const getCellClass = (result: any) => {
@@ -470,6 +556,8 @@ export default function ContestDetail() {
   const status = getStatus();
   const isRunning = status === 'running';
   const isEnded = status === 'ended';
+  // 答疑仅限:比赛进行中(或已结束)且已报名者(主办方始终可答可问)
+  const canAskQuestion = status !== 'upcoming' && (isHost || registered);
 
   return (
     <div className={`contest-detail-page ${isRunning ? 'contest-running' : ''}`}>
@@ -530,7 +618,8 @@ export default function ContestDetail() {
               {contest.is_rated && (
                 <span className="badge badge-success">{t('contests.ratedContest')}</span>
               )}
-              <span className={STATUS_BADGE_CLASS[status] || 'badge'}>
+              <span className={`${STATUS_BADGE_CLASS[status] || 'badge'} contest-status-badge`}>
+                {(() => { const Icon = STATUS_ICON[status] || Clock; return <Icon size={12} />; })()}
                 {getStatusLabel(status)}
               </span>
             </div>
@@ -561,9 +650,57 @@ export default function ContestDetail() {
             )}
           </div>
 
+          {/* 比赛规则 + 参赛须知 */}
+          <div className="contest-info-panel">
+            <div className="contest-info-panel-section">
+              <h4 className="contest-info-panel-title">
+                <BookOpen size={14} /> {t('contests.contestRules')}
+              </h4>
+              <ul className="contest-info-panel-list">
+                <li>
+                  <span className="info-item-label">{t('contests.scoringRule')}:</span>
+                  {contest.scoring_type === 'oi'
+                    ? t('contests.ruleOi')
+                    : contest.scoring_type === 'ioi'
+                      ? t('contests.ruleIoi')
+                      : t('contests.ruleIcpc')}
+                </li>
+                <li>
+                  <span className="info-item-label">{t('contests.ratedContest')}:</span>
+                  {contest.is_rated ? t('contests.yes') : t('contests.no')}
+                </li>
+                {contest.duration_minutes > 0 && (
+                  <li>
+                    <span className="info-item-label">{t('contests.durationMinutes')}:</span>
+                    {contest.duration_minutes} {t('contests.minutes')}
+                  </li>
+                )}
+                <li>
+                  <span className="info-item-label">{t('contests.freezeMinutes')}:</span>
+                  {contest.freeze_minutes > 0 ? `${contest.freeze_minutes} ${t('contests.minutes')}` : t('contests.noFreeze')}
+                </li>
+                <li>
+                  <span className="info-item-label">{t('contests.allowVirtual')}:</span>
+                  {contest.allow_virtual ? t('contests.yes') : t('contests.virtualDisabled')}
+                </li>
+              </ul>
+            </div>
+            <div className="contest-info-panel-section">
+              <h4 className="contest-info-panel-title">
+                <AlertCircle size={14} /> {t('contests.noticeTitle')}
+              </h4>
+              <ul className="contest-info-panel-list">
+                <li>{t('contests.noticeRegister')}</li>
+                <li>{t('contests.noticeTimeWindow')}</li>
+                <li>{t('contests.noticeClarify')}</li>
+                <li>{t('contests.noticeRanking')}</li>
+              </ul>
+            </div>
+          </div>
+
           {user && (
             <div className="contest-actions">
-              {(user.role === 'admin' || user.role === 'super_admin') && !isTeamMatch && (
+              {isHost && !isTeamMatch && (
                 <Link to={`${matchRoot}/edit`} className="btn btn-secondary btn-sm">
                   <Edit3 size={14} />
                   {t('contests.editContest')}
@@ -656,12 +793,12 @@ export default function ContestDetail() {
               </div>
             )}
             {showAnnouncementForm && (
-              <div className="card form-card" style={{ marginBottom: 12 }}>
+              <div className="card announcement-form">
                 <input className="form-input" placeholder={t('contests.announcementTitle')} value={annTitle}
                   onChange={(e) => setAnnTitle(e.target.value)} />
                 <textarea className="form-input form-textarea" rows={3} placeholder={t('contests.announcementContent')}
                   value={annContent} onChange={(e) => setAnnContent(e.target.value)} />
-                <div className="form-actions">
+                <div className="announcement-form-actions">
                   <button className="btn btn-primary" onClick={handlePublishAnnouncement}>{t('common.submit')}</button>
                 </div>
               </div>
@@ -671,17 +808,21 @@ export default function ContestDetail() {
             ) : (
               <div className="announcement-list">
                 {announcements.map((a: any) => (
-                  <div key={a.id} className="card announcement-item" style={{ padding: 12, marginBottom: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h4 style={{ margin: 0 }}>{a.is_pinned ? '📌 ' : ''}{a.title}</h4>
+                  <div key={a.id} className={`card announcement-item${a.is_pinned ? ' is-pinned' : ''}`}>
+                    <div className="announcement-item-header">
+                      <h4 className="announcement-title">{a.is_pinned ? '📌 ' : ''}{a.title}</h4>
                       {isHost && (
                         <button className="btn-icon-sm danger" onClick={() => handleDeleteAnnouncement(a.id)}>
                           <X size={13} />
                         </button>
                       )}
                     </div>
-                    <p style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{a.content}</p>
-                    <small style={{ color: 'var(--text-secondary)' }}>{a.username} · {new Date(a.created_at).toLocaleString()}</small>
+                    <p className="announcement-content">{a.content}</p>
+                    <div className="announcement-meta">
+                      <span className="announcement-author">{a.username}</span>
+                      <span className="announcement-dot">·</span>
+                      <time>{new Date(a.created_at).toLocaleString()}</time>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -692,11 +833,14 @@ export default function ContestDetail() {
         {/* Clarifications Tab */}
         {activeTab === 'clarifications' && (
           <div className="contest-clarifications">
-            <div className="card form-card" style={{ marginBottom: 12 }}>
-              <textarea className="form-input form-textarea" rows={2} placeholder={t('contests.questionPlaceholder')}
-                value={clarQuestion} onChange={(e) => setClarQuestion(e.target.value)} />
-              <div className="form-actions">
-                <button className="btn btn-primary" onClick={handleAskQuestion} disabled={!clarQuestion.trim()}>
+            <div className="card clarification-composer">
+              <textarea className="form-input form-textarea"
+                placeholder={canAskQuestion ? t('contests.questionPlaceholder') : (status === 'upcoming' ? t('contests.notStarted') : t('contests.registerFirstHint'))}
+                value={clarQuestion}
+                disabled={!canAskQuestion}
+                onChange={(e) => setClarQuestion(e.target.value)} />
+              <div className="clarification-composer-actions">
+                <button className="btn btn-primary" onClick={handleAskQuestion} disabled={!canAskQuestion || !clarQuestion.trim()}>
                   <Send size={14} /> {t('contests.askQuestion')}
                 </button>
               </div>
@@ -706,15 +850,18 @@ export default function ContestDetail() {
             ) : (
               <div className="clarification-list">
                 {clarifications.map((cl: any) => (
-                  <div key={cl.id} className="card" style={{ padding: 12, marginBottom: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <strong>{cl.username}: {cl.question}</strong>
+                  <div key={cl.id} className="card clarification-item">
+                    <div className="clarification-item-header">
+                      <span className="clarification-author">{cl.username}</span>
                       {cl.status === 'answered' && <span className="badge badge-success">{t('contests.answer')}</span>}
                     </div>
+                    <p className="clarification-question">{cl.question}</p>
                     {cl.answer ? (
-                      <p style={{ margin: '8px 0 0' }}>{cl.answer}</p>
+                      <div className="clarification-answer">
+                        <p className="clarification-answer-text">{cl.answer}</p>
+                      </div>
                     ) : isHost ? (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <div className="clarification-reply">
                         <input className="form-input" placeholder={t('contests.answerPlaceholder')}
                           value={answerDrafts[cl.id] || ''}
                           onChange={(e) => setAnswerDrafts((d) => ({ ...d, [cl.id]: e.target.value }))} />
@@ -722,7 +869,9 @@ export default function ContestDetail() {
                           {t('contests.answer')}
                         </button>
                       </div>
-                    ) : null}
+                    ) : (
+                      <p className="clarification-pending">{t('contests.pendingAnswer')}</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -740,7 +889,7 @@ export default function ContestDetail() {
                 <div className="problems-table-header">
                   <span className="col-label">#</span>
                   <span className="col-title">{t('problemList.titleCol')}</span>
-                  <span className="col-difficulty" style={{width:'80px'}}>难度</span>
+                  <span className="col-difficulty" style={{width:'80px'}}>{t('problemList.difficulty')}</span>
                   <span className="col-score">{t('admin.score')}</span>
                   <span className="col-actions">{t('common.actions')}</span>
                 </div>
@@ -794,9 +943,15 @@ export default function ContestDetail() {
               <div className="empty-tab">{t('contests.noRankings')}</div>
             ) : (
               <div className="rankings-table-enhanced">
-                {rankingsMeta.board_frozen && (
+                {/* Show freeze banner if board is frozen (during contest) or was frozen (after contest) */}
+                {rankingsMeta.board_frozen && !isRunning && (
                   <div className="freeze-banner">
-                    <AlertCircle size={16} /> 排行榜已冻结 — 最后 {contest.freeze_minutes || 60} 分钟的结果暂时隐藏
+                    <AlertCircle size={16} /> 🏆 最终排名（封榜结束后）
+                  </div>
+                )}
+                {rankingsMeta.board_frozen && isRunning && (
+                  <div className="freeze-banner">
+                    <AlertCircle size={16} /> ⏰ 榜单冻结 ({t('contests.freezeMinutes').replace('{0}', String(contest.freeze_minutes || 60))})
                   </div>
                 )}
                 <div className="rankings-table-header">
@@ -818,23 +973,46 @@ export default function ContestDetail() {
                     <span className="col-user">
                       <Link to={`/users/${entry.username}`} className="user-link">
                         {entry.username}
-                        {entry.is_virtual && <span className="virtual-flag" title="Virtual">V</span>}
+                        {!!entry.is_virtual && <span className="virtual-flag" title="Virtual">V</span>}
                       </Link>
                     </span>
-                    <span className="col-score">{entry.total_score ?? 0}</span>
+                    <span className="col-score">{rankingsMeta.result_hidden ? '-' : (entry.total_score ?? 0)}</span>
                     {rankingsMeta.scoring_type === 'icpc' && (
-                      <span className="col-penalty">{formatPenalty(entry.total_penalty ?? 0)}</span>
+                      <span className="col-penalty">{rankingsMeta.result_hidden ? '-' : formatPenalty(entry.total_penalty ?? 0)}</span>
                     )}
                     {rankingProblems.map((cp: any) => {
                       const result = entry.problems?.[cp.label];
                       return (
                         <span key={cp.label} className={`col-problem ${getCellClass(result)}`}>
-                          {getCellContent(result)}
+                          {rankingsMeta.result_hidden ? '-' : getCellContent(result)}
                         </span>
                       );
                     })}
                   </div>
                 ))}
+                {rankingsPagination && rankingsPagination.totalPages > 1 && (
+                  <div className="rankings-pagination">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={rankingsPagination.page <= 1}
+                      onClick={() => fetchRankings(rankingsPagination.page - 1)}
+                    >
+                      {t('common.previous')}
+                    </button>
+                    <span className="rankings-pagination-info">
+                      {rankingsPagination.page} / {rankingsPagination.totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={rankingsPagination.page >= rankingsPagination.totalPages}
+                      onClick={() => fetchRankings(rankingsPagination.page + 1)}
+                    >
+                      {t('common.next')}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -908,8 +1086,8 @@ export default function ContestDetail() {
                       <span className="col-user">
                         <Link to={`/users/${entry.username}`} className="user-link">{entry.username}</Link>
                       </span>
-                      <span className="col-score">{entry.total_score ?? 0}</span>
-                      {rankingsMeta.scoring_type === 'icpc' && <span className="col-penalty">{formatPenalty(entry.total_penalty ?? 0)}</span>}
+                      <span className="col-score">{rankingsMeta.result_hidden ? '-' : (entry.total_score ?? 0)}</span>
+                      {rankingsMeta.scoring_type === 'icpc' && <span className="col-penalty">{rankingsMeta.result_hidden ? '-' : formatPenalty(entry.total_penalty ?? 0)}</span>}
                       {rankingProblems.map((cp: any) => {
                         const result = entry.problems?.[cp.label];
                         return (

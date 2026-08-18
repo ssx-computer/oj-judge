@@ -157,6 +157,8 @@ problems.get('/recommend', authMiddleware, async (c) => {
     `SELECT id, title, slug, tags, difficulty, rating
      FROM problems
      WHERE is_public = 1
+       AND id NOT IN (SELECT problem_id FROM contest_problems)
+       AND id NOT IN (SELECT problem_id FROM team_contest_problems)
      ORDER BY rating ASC
      LIMIT 200`
   ).all();

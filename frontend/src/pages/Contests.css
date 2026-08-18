@@ -123,6 +123,47 @@
   color: var(--text-muted);
 }
 
+/* 状态徽章：图标 + 文字垂直居中对齐 */
+.contest-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* running 状态强调：呼吸感圆点动画 */
+.contest-status-badge.badge-success {
+  position: relative;
+}
+
+.contest-status-badge.badge-success::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: contest-status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes contest-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* 列表分页控件 */
+.contests-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.contests-pagination-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
 @media (max-width: 600px) {
   .contests-header {
     flex-direction: column;

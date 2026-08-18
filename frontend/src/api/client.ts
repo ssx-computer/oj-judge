@@ -161,6 +161,7 @@ export interface Contest {
   is_rated?: number;
   allow_virtual?: number;
   duration_minutes?: number;
+  freeze_minutes?: number;
   rating_finalized?: number;
   participant_count?: number;
   is_registered?: boolean;
@@ -1200,14 +1201,21 @@ class ApiClient {
     });
   }
 
-  async getContestRankings(id: number) {
+  async getContestRankings(id: number, page?: number, pageSize?: number, virtual?: boolean) {
+    const params = new URLSearchParams();
+    if (page && pageSize) { params.set('page', String(page)); params.set('pageSize', String(pageSize)); }
+    if (virtual) params.set('virtual', '1');
+    const qs = params.toString() ? `?${params.toString()}` : '';
     return this.request<{
       rankings: ContestRanking[];
       problems: ContestProblem[];
       scoring_type?: string;
       is_rated?: number;
       rating_finalized?: number;
-    }>(`/contests/${id}/rankings`);
+      result_hidden?: number;
+      board_frozen?: number;
+      pagination?: { page: number; pageSize: number; total: number; totalPages: number };
+    }>(`/contests/${id}/rankings${qs}`);
   }
 
   async checkContestRegistration(id: number) {
@@ -1495,10 +1503,11 @@ class ApiClient {
     }, true);
   }
 
-  async uploadFile(file: File) {
+  async uploadFile(file: File, isPublic: boolean = true) {
     const formData = new FormData();
     formData.append('file', file);
-    return this.request<{ id: number; url: string; filename: string; original_name: string; file_type: string; size_bytes: number }>('/uploads/file', {
+    formData.append('is_public', isPublic ? '1' : '0');
+    return this.request<{ id: number; url: string; filename: string; original_name: string; file_type: string; size_bytes: number; is_public: number }>('/uploads/file', {
       method: 'POST',
       body: formData,
     }, true);

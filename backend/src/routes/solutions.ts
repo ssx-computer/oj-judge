@@ -145,6 +145,13 @@ solutions.post('/', authMiddleware, captchaMiddleware('solution'), async (c) => 
     return c.json({ success: false, error: { message: 'content is required', code: 'BAD_REQUEST' } }, 400);
   }
 
+  if (title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (content.length > 200000) {
+    return c.json({ success: false, error: { message: 'content must be at most 200000 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+
   if (!problem_id) {
     return c.json({ success: false, error: { message: 'problem_id is required', code: 'BAD_REQUEST' } }, 400);
   }
@@ -269,6 +276,13 @@ solutions.put('/:id', authMiddleware, async (c) => {
 
   if ((existing as any).user_id !== user.userId) {
     return c.json({ success: false, error: { message: 'Forbidden: only author can edit', code: 'FORBIDDEN' } }, 403);
+  }
+
+  if (body.title !== undefined && body.title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (body.content !== undefined && body.content.length > 200000) {
+    return c.json({ success: false, error: { message: 'content must be at most 200000 characters', code: 'BAD_REQUEST' } }, 400);
   }
 
   const fields: string[] = [];

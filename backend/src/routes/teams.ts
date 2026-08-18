@@ -5,6 +5,7 @@ import { escapeLikeWildcard } from '../utils/helpers';
 import { validateSlug } from '../utils/validator';
 import { fetchTestcases, saveTestcases, deleteTestcases } from '../utils/github-testcases';
 import { fetchSpjCode, saveSpjCode, deleteSpjCode } from '../utils/github-spj';
+import { parseContestTimeToMs } from '../utils/contest-time';
 
 const VALID_SPJ_LANGUAGES = ['python', 'cpp', 'java', 'javascript', 'c', 'go', 'rust'];
 
@@ -1098,10 +1099,24 @@ teams.get('/:id/contests', async (c) => {
      ORDER BY tc.start_time DESC LIMIT ? OFFSET ?`
   ).bind(...binds, pageSize, offset).all();
 
+  // 每条附加按当前时间动态计算的 effective_status(不依赖可能过期的 status 静态字段)
+  const contests = (results.results as any[]).map((tc: any) => {
+    const nowMs = Date.now();
+    const s = parseContestTimeToMs(tc.start_time);
+    const e = parseContestTimeToMs(tc.end_time);
+    let effective_status = tc.status;
+    if (isFinite(s) && isFinite(e)) {
+      if (nowMs >= s && nowMs < e) effective_status = 'running';
+      else if (nowMs >= e) effective_status = 'finished';
+      else effective_status = 'pending';
+    }
+    return { ...tc, effective_status };
+  });
+
   return c.json({
     success: true,
     data: {
-      contests: results.results,
+      contests,
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
     },
   });
@@ -1116,6 +1131,17 @@ teams.post('/:id/contests', authMiddleware, async (c) => {
 
   if (!title || !start_time || !end_time) {
     return c.json({ success: false, error: { message: 'title, start_time, and end_time are required', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  // 与官方赛创建接口一致的校验:时间顺序 + 长度限制
+  if (new Date(start_time) >= new Date(end_time)) {
+    return c.json({ success: false, error: { message: 'start_time must be before end_time', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (description && description.length > 5000) {
+    return c.json({ success: false, error: { message: 'description must be at most 5000 characters', code: 'BAD_REQUEST' } }, 400);
   }
 
   if (!await isTeamMember(c.env.DB, id, user.userId)) {
@@ -1166,11 +1192,20 @@ teams.get('/:id/contests/:contestId', authMiddleware, async (c) => {
   const isManager = team && isTeamOwnerOrAdmin(team, currentUser?.userId, currentUser);
   const userIsMember = currentUser ? await isTeamMember(c.env.DB, id, currentUser.userId) : false;
 
+  // 按当前时间动态计算比赛状态(不依赖可能过期的 status 静态字段)
+  const tcNowMs = Date.now();
+  const tcStartMs = parseContestTimeToMs((contest as any).start_time);
+  const tcEndMs = parseContestTimeToMs((contest as any).end_time);
+  let effective_status: 'pending' | 'running' | 'finished' = 'pending';
+  if (isFinite(tcStartMs) && isFinite(tcEndMs)) {
+    if (tcNowMs >= tcStartMs && tcNowMs < tcEndMs) effective_status = 'running';
+    else if (tcNowMs >= tcEndMs) effective_status = 'finished';
+  }
+
   // 比赛前题目不可见:未开始仅主办方可见题目;运行中仅团队成员可见题目
-  const status = (contest as any).status;
   let problemsVisible = true;
-  if (status === 'pending' && !isManager) problemsVisible = false;
-  if (status === 'running' && !userIsMember && !isManager) problemsVisible = false;
+  if (effective_status === 'pending' && !isManager) problemsVisible = false;
+  if (effective_status === 'running' && !userIsMember && !isManager) problemsVisible = false;
 
   const problems = problemsVisible ? await c.env.DB.prepare(
     `SELECT tcp.id, tcp.problem_id, tcp.sort_order, tcp.score,
@@ -1201,6 +1236,8 @@ teams.get('/:id/contests/:contestId', authMiddleware, async (c) => {
       participant_count: (participantCount as any)?.cnt || 0,
       is_registered: isRegistered,
       problems_visible: problemsVisible ? 1 : 0,
+      effective_status,
+      server_time: new Date().toISOString(),
     },
   });
 });
@@ -1244,7 +1281,7 @@ teams.get('/:id/contests/:contestId/problems/:problemId', authMiddleware, async 
   const problemId = parseInt(c.req.param('problemId') || '0');
 
   const contest: any = await c.env.DB.prepare(
-    'SELECT id, status FROM team_contests WHERE id = ? AND team_id = ?'
+    'SELECT id, start_time, end_time FROM team_contests WHERE id = ? AND team_id = ?'
   ).bind(contestId, id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
@@ -1258,7 +1295,13 @@ teams.get('/:id/contests/:contestId/problems/:problemId', authMiddleware, async 
   const isManager = team && isTeamOwnerOrAdmin(team, currentUser.userId, currentUser);
   const userIsMember = await isTeamMember(c.env.DB, id, currentUser.userId);
 
-  const status = (contest as any).status;
+  // 按当前时间动态判定:status 静态字段创建后不会更新,比赛开始后仍可能是 'pending'
+  const tcNowMs = Date.now();
+  const tcStartMs = parseContestTimeToMs((contest as any).start_time);
+  const tcEndMs = parseContestTimeToMs((contest as any).end_time);
+  const status = (!isFinite(tcStartMs) || !isFinite(tcEndMs))
+    ? (contest as any).status
+    : tcNowMs < tcStartMs ? 'pending' : tcNowMs < tcEndMs ? 'running' : 'finished';
   if (status === 'pending' && !isManager) {
     return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
   }
@@ -1293,16 +1336,38 @@ teams.get('/:id/contests/:contestId/problems/:problemId', authMiddleware, async 
 });
 
 // GET /teams/:id/contests/:contestId/rankings — 竞赛排行榜
-teams.get('/:id/contests/:contestId/rankings', async (c) => {
+teams.get('/:id/contests/:contestId/rankings', authMiddleware, async (c) => {
+  const user = c.get('user');
   const id = parseInt(c.req.param('id') || '0');
   const contestId = parseInt(c.req.param('contestId') || '0');
 
+  const team: any = await c.env.DB.prepare('SELECT owner_id FROM teams WHERE id = ?').bind(id).first();
+  if (!team) {
+    return c.json({ success: false, error: { message: 'Team not found', code: 'NOT_FOUND' } }, 404);
+  }
+  const isManager = team && isTeamOwnerOrAdmin(team, user.userId, user);
+  const userIsMember = await isTeamMember(c.env.DB, id, user.userId);
+  // 与详情接口语义一致:非成员放行但返回空榜(不泄露参赛者数据),避免前端整页报错
+  if (!isManager && !userIsMember) {
+    return c.json({ success: true, data: { rankings: [], result_hidden: 0 } });
+  }
+
   const contest: any = await c.env.DB.prepare(
-    'SELECT id, scoring_type FROM team_contests WHERE id = ? AND team_id = ?'
+    'SELECT id, scoring_type, start_time, end_time FROM team_contests WHERE id = ? AND team_id = ?'
   ).bind(contestId, id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
+
+  // 按当前时间动态计算比赛状态(不依赖可能过期的 status 静态字段)
+  const tcNowMs = Date.now();
+  const tcStartMs = parseContestTimeToMs((contest as any).start_time);
+  const tcEndMs = parseContestTimeToMs((contest as any).end_time);
+  const effectiveStatus = (!isFinite(tcStartMs) || !isFinite(tcEndMs))
+    ? (contest as any).status
+    : tcNowMs < tcStartMs ? 'pending' : tcNowMs < tcEndMs ? 'running' : 'finished';
+  // OI 赛制赛时隐藏评测结果(与官方赛一致,按动态状态判断)
+  const oiRunning = (contest as any).scoring_type === 'oi' && effectiveStatus === 'running';
 
   const participants = await c.env.DB.prepare(
     `SELECT tcp.user_id, u.username, u.avatar_url
@@ -1354,11 +1419,23 @@ teams.get('/:id/contests/:contestId/rankings', async (c) => {
     })
   );
 
-  rankings.sort((a, b) => b.total_score - a.total_score);
+  // OI 赛时:隐藏每题得分/状态,保留排名(比赛结束后自动解禁)
+  if (oiRunning) {
+    for (const r of rankings as any[]) {
+      r.total_score = null;
+      for (const pr of r.problems) {
+        pr.status = 'pending';
+        pr.score = null;
+        pr.time_used = null;
+      }
+    }
+  }
+
+  rankings.sort((a, b) => (b.total_score ?? 0) - (a.total_score ?? 0));
 
   return c.json({
     success: true,
-    data: { rankings },
+    data: { rankings, result_hidden: oiRunning ? 1 : 0 },
   });
 });
 
@@ -1567,12 +1644,15 @@ teams.post('/:id/contests/:contestId/clarifications', authMiddleware, async (c) 
   }
 
   const contest: any = await c.env.DB.prepare(
-    'SELECT id, status FROM team_contests WHERE id = ? AND team_id = ?'
+    'SELECT id, start_time, end_time FROM team_contests WHERE id = ? AND team_id = ?'
   ).bind(contestId, id).first();
   if (!contest) {
     return c.json({ success: false, error: { message: 'Contest not found', code: 'NOT_FOUND' } }, 404);
   }
-  if ((contest as any).status === 'pending') {
+  // 按当前时间动态判定:status 静态字段创建后不会更新,比赛开始后仍可能是 'pending'
+  const tcNowMs = Date.now();
+  const tcStartMs = parseContestTimeToMs((contest as any).start_time);
+  if (isFinite(tcStartMs) && tcNowMs < tcStartMs) {
     return c.json({ success: false, error: { message: 'Contest has not started yet', code: 'FORBIDDEN' } }, 403);
   }
 

@@ -46,6 +46,8 @@ export default function ProblemDetail() {
   const [lastStatus, setLastStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [contestAccessDenied, setContestAccessDenied] = useState<{ reason: string; contestId?: number | string } | null>(null);
+  const [, setServerOffsetMs] = useState<number>(0);
   const [isFavorited, setIsFavorited] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [submissionStatus, setSubmissionStatus] = useState<'none' | 'accepted' | 'attempted'>('none');
@@ -111,89 +113,117 @@ export default function ProblemDetail() {
   const [captchaUuid, setCaptchaUuid] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const captchaRef = useRef<CaptchaHandle>(null);
-
-  // ── Fetch problem on slug change (Bug 8 fix: separate effects) ──
-
+  // ── Fetch problem on slug change (separate from user-specific checks) ──
   useEffect(() => {
     if (!problemKey) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    let problemPromise;
-    if (isContestProblem && matchId && problemId) {
-      problemPromise = api.getContestProblem(matchId, problemId);
-    } else if (isTeamProblem && teamId && problemId) {
-      problemPromise = api.getTeamProblem(Number(teamId), Number(problemId));
-    } else if (isTeamContestProblem && teamId && matchId && problemId) {
-      problemPromise = api.getTeamContestProblem(Number(teamId), Number(matchId), Number(problemId));
-    } else if (slug) {
-      problemPromise = api.getProblem(slug);
-    } else {
-      return;
-    }
-    problemPromise
-      .then((data: any) => {
-        if (!isMountedRef.current) return;
-        setProblem(data.problem);
-        setSampleTestcases(data.sampleTestcases || []);
-        setStats(data.stats);
-        setLoadError('');
-      })
-      .catch((e) => {
-        if (!isMountedRef.current) return;
-        setLoadError(e.message || t('problemDetail.loadError'));
-      })
-      .finally(() => {
-        if (isMountedRef.current) setLoading(false);
-      });
+    let cancelled = false;
 
-    // 关联题目/语言分布仅对公共题目有意义
-    if (!isContestProblem && !isTeamProblem && !isTeamContestProblem && slug) {
-      api.getRelatedProblems(slug)
-        .then((data) => {
-          if (isMountedRef.current) setRelatedProblems(data.problems || []);
-        })
-        .catch(() => {});
+    const fetchProblem = async () => {
+      try {
+        if (isContestProblem && matchId && problemId) {
+          // Pre-check contest status from server
+          try {
+            const contestData: any = await api.getContest(Number(matchId));
+            if (contestData.server_time) {
+              const serverMs = new Date(contestData.server_time).getTime();
+              setServerOffsetMs(serverMs - Date.now());
+            }
+            if (contestData.effective_status === 'upcoming') {
+              setLoadError(t('contests.notStarted'));
+              setLoading(false);
+              return;
+            }
+          } catch (e) {
+            // ignore and let the problem endpoint return authoritative error
+          }
 
-      api.getProblemLanguages(slug)
-        .then((data) => {
-          if (isMountedRef.current) setProblemLanguages(data.languages || []);
-        })
-        .catch(() => {});
-    }
+          const data: any = await api.getContestProblem(matchId, problemId);
+          if (cancelled) return;
+          setProblem(data.problem);
+          setSampleTestcases(data.sampleTestcases || []);
+          setStats(data.stats);
+          setLoadError('');
+          setContestAccessDenied(null);
+        } else if (isTeamProblem && teamId && problemId) {
+          const data: any = await api.getTeamProblem(Number(teamId), Number(problemId));
+          if (cancelled) return;
+          setProblem(data.problem);
+          setSampleTestcases(data.sampleTestcases || []);
+          setStats(data.stats);
+          setLoadError('');
+          setContestAccessDenied(null);
+        } else if (isTeamContestProblem && teamId && matchId && problemId) {
+          const data: any = await api.getTeamContestProblem(Number(teamId), Number(matchId), Number(problemId));
+          if (cancelled) return;
+          setProblem(data.problem);
+          setSampleTestcases(data.sampleTestcases || []);
+          setStats(data.stats);
+          setLoadError('');
+          setContestAccessDenied(null);
+        } else if (slug) {
+          const data: any = await api.getProblem(slug);
+          if (cancelled) return;
+          setProblem(data.problem);
+          setSampleTestcases(data.sampleTestcases || []);
+          setStats(data.stats);
+          setLoadError('');
+          setContestAccessDenied(null);
+        }
+
+        // Related info for public problems
+        if (!isContestProblem && !isTeamProblem && !isTeamContestProblem && slug) {
+          try {
+            const rel = await api.getRelatedProblems(slug);
+            if (!cancelled) setRelatedProblems(rel.problems || []);
+          } catch {}
+          try {
+            const langs = await api.getProblemLanguages(slug);
+            if (!cancelled) setProblemLanguages(langs.languages || []);
+          } catch {}
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+        const msg = (e && e.message) ? e.message : String(e);
+        if (msg.toLowerCase().includes('register')) {
+          setContestAccessDenied({ reason: msg, contestId: matchId || undefined });
+          setLoadError('');
+        } else {
+          setLoadError(msg || t('problemDetail.loadError'));
+          setContestAccessDenied(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    fetchProblem();
+    return () => { cancelled = true; };
   }, [problemKey, slug, problemId, teamId, matchId, isContestProblem, isTeamProblem, isTeamContestProblem]);
 
   // ── Fetch user-specific data when user + problem are available ──
-
   useEffect(() => {
     if (!user || !problem?.id) return;
+    let cancelled = false;
 
-    // Check favorite status
     api.checkFavorite(problem.id)
-      .then((result) => {
-        if (isMountedRef.current) setIsFavorited(result.is_favorited);
-      })
-      .catch((e) => console.error('Failed to check favorite:', e));
+      .then((result) => { if (!cancelled) setIsFavorited(result.is_favorited); })
+      .catch(() => {});
 
-    // Check submission status — single API call (Bug 3 fix)
     api.getProblemStatus(problem.id)
       .then((result) => {
-        if (!isMountedRef.current) return;
-        if (result.solved) {
-          setSubmissionStatus('accepted');
-        } else if (result.attempted) {
-          setSubmissionStatus('attempted');
-        } else {
-          setSubmissionStatus('none');
-        }
+        if (cancelled) return;
+        if (result.solved) setSubmissionStatus('accepted');
+        else if (result.attempted) setSubmissionStatus('attempted');
+        else setSubmissionStatus('none');
       })
       .catch((e) => console.error('Failed to check submission status:', e));
 
-    // Fetch recent submissions
     api.getSubmissions({ problem_id: String(problem.id), pageSize: 5 })
-      .then((data) => {
-        if (isMountedRef.current) setRecentSubmissions(data.submissions);
-      })
-      .catch((e) => console.error('Failed to fetch recent submissions:', e));
+      .then((data) => { if (!cancelled) setRecentSubmissions(data.submissions); })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
   }, [user, problem?.id]);
 
   // Fetch prev/next problem navigation
@@ -643,6 +673,32 @@ export default function ProblemDetail() {
       <div className="empty-container">
         <AlertCircle size={48} style={{ color: 'var(--text-secondary)', opacity: 0.4 }} />
         <h2>{loadError || t('problemDetail.problemNotFound')}</h2>
+        {contestAccessDenied && (
+          <div style={{ marginTop: 12 }}>
+            <p>{contestAccessDenied.reason}</p>
+            {user ? (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" onClick={async () => {
+                  try {
+                    setLoadError('');
+                    // Attempt registration
+                    if (contestAccessDenied.contestId) {
+                      await api.registerContest(Number(contestAccessDenied.contestId));
+                    }
+                    // Retry load
+                    setLoading(true);
+                    window.location.reload();
+                  } catch (e: any) {
+                    setLoadError(e.message || t('common.error'));
+                  }
+                }}>{t('contests.register')}</button>
+                <Link to={`/match/${contestAccessDenied.contestId}`} className="btn btn-secondary">{t('contests.backToContest')}</Link>
+              </div>
+            ) : (
+              <Link to="/login" className="btn btn-primary">{t('auth.loginToRegister')}</Link>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: '8px' }}>
           {loadError && problemKey && (
             <button className="btn btn-secondary" onClick={() => {
@@ -704,7 +760,7 @@ export default function ProblemDetail() {
             <div className="problem-status">
               {getStatusIcon()}
               <span className={`status-text ${submissionStatus}`}>
-                {submissionStatus === 'accepted' ? t('problemDetail.solved') : submissionStatus === 'attempted' ? t('problemDetail.attempted') : t('problemDetail.notStarted')}
+                {submissionStatus === 'accepted' ? t('problemDetail.solved') : submissionStatus === 'attempted' ? t('problemDetail.attempted') : t('problemDetail.unattempted')}
               </span>
             </div>
           </div>

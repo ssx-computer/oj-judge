@@ -1,11 +1,26 @@
 import { Hono } from 'hono';
 import { AppType } from '../types';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth';
 
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const SAFE_FILENAME_RE = /[^a-zA-Z0-9._-]/g;
+
+// 校验图片文件真实内容(magic bytes),防止伪造 MIME 上传非图片/SVG 脚本
+function verifyImageSignature(buffer: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(buffer.slice(0, 16));
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return true;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return true;
+  // GIF: 47 49 46 38 ("GIF8")
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return true;
+  // WebP: "RIFF" .... "WEBP"
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return true;
+  return false;
+}
 
 /**
  * Sanitize a filename to prevent path traversal and header injection.
@@ -74,11 +89,17 @@ uploads.post('/image', authMiddleware, async (c) => {
   }
 
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    return c.json({ success: false, error: { message: 'Invalid image type. Allowed: jpg, png, gif, webp, svg', code: 'BAD_REQUEST' } }, 400);
+    return c.json({ success: false, error: { message: 'Invalid image type. Allowed: jpg, png, gif, webp', code: 'BAD_REQUEST' } }, 400);
   }
 
   if (file.size > MAX_IMAGE_SIZE) {
     return c.json({ success: false, error: { message: 'Image too large (max 5MB)', code: 'BAD_REQUEST' } }, 400);
+  }
+
+  // 校验文件真实内容(防止伪造 MIME 上传 SVG 等非白名单图片)
+  const sigBuffer = await file.arrayBuffer();
+  if (!verifyImageSignature(sigBuffer)) {
+    return c.json({ success: false, error: { message: 'File content does not match an allowed image type', code: 'BAD_REQUEST' } }, 400);
   }
 
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -154,6 +175,8 @@ uploads.post('/file', authMiddleware, async (c) => {
 
   const body = await c.req.parseBody();
   const file = body['file'];
+  // 是否公开(默认公开,保持与已上传文件一致);false/0 表示私有,仅本人或 upload_admin 可下载
+  const isPublic = body['is_public'] === undefined ? 1 : (body['is_public'] === 'false' || body['is_public'] === '0' ? 0 : 1);
 
   if (!file || !(file instanceof File)) {
     return c.json({ success: false, error: { message: 'No file provided', code: 'BAD_REQUEST' } }, 400);
@@ -196,8 +219,8 @@ uploads.post('/file', authMiddleware, async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    'INSERT INTO uploads (user_id, filename, original_name, file_type, mime_type, size_bytes, github_path) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(user.userId, filename, file.name, 'file', file.type, file.size, githubPath).run();
+    'INSERT INTO uploads (user_id, filename, original_name, file_type, mime_type, size_bytes, github_path, is_public) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(user.userId, filename, file.name, 'file', file.type, file.size, githubPath, isPublic).run();
 
   const uploadId = result.meta.last_row_id;
 
@@ -213,6 +236,7 @@ uploads.post('/file', authMiddleware, async (c) => {
       original_name: file.name,
       file_type: 'file',
       size_bytes: file.size,
+      is_public: isPublic,
     },
   });
 });
@@ -276,12 +300,23 @@ uploads.get('/', authMiddleware, async (c) => {
 });
 
 // Proxy file download (needed because GitHub repo is private)
-uploads.get('/download/:id', async (c) => {
+// 公开文件(is_public=1 或图片)任何人可下载;私有文件(is_public=0 且 file 类型)仅本人或 upload_admin 可下载
+uploads.get('/download/:id', optionalAuthMiddleware, async (c) => {
   const uploadId = parseInt(c.req.param('id') || '0');
 
   const upload: any = await c.env.DB.prepare('SELECT * FROM uploads WHERE id = ?').bind(uploadId).first();
   if (!upload) {
     return c.json({ success: false, error: { message: 'File not found', code: 'NOT_FOUND' } }, 404);
+  }
+
+  // 私有文件鉴权:非公开的 file 类型仅上传者本人或 upload_admin 可下载
+  if (upload.is_public !== 1 && upload.file_type !== 'image') {
+    const user = c.get('user');
+    const isUploadAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
+      || (Array.isArray(user?.permissions) && user.permissions.includes('upload_admin')));
+    if (!user || (upload.user_id !== user.userId && !isUploadAdmin)) {
+      return c.json({ success: false, error: { message: 'Forbidden: file is private', code: 'FORBIDDEN' } }, 403);
+    }
   }
 
   try {
@@ -381,14 +416,19 @@ uploads.post('/avatar', authMiddleware, async (c) => {
   }
 
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    return c.json({ success: false, error: { message: 'Invalid image type. Allowed: JPEG, PNG, GIF, WebP, SVG', code: 'BAD_REQUEST' } }, 400);
+    return c.json({ success: false, error: { message: 'Invalid image type. Allowed: JPEG, PNG, GIF, WebP', code: 'BAD_REQUEST' } }, 400);
   }
 
   if (file.size > MAX_IMAGE_SIZE) {
     return c.json({ success: false, error: { message: 'Image too large. Max 5MB', code: 'BAD_REQUEST' } }, 400);
   }
 
+  // 校验文件真实内容(防止伪造 MIME 上传 SVG 等非白名单图片)
   const buffer = await file.arrayBuffer();
+  if (!verifyImageSignature(buffer)) {
+    return c.json({ success: false, error: { message: 'File content does not match an allowed image type', code: 'BAD_REQUEST' } }, 400);
+  }
+
   const base64 = encodeBase64(buffer);
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const ext = file.name.split('.').pop() || 'png';

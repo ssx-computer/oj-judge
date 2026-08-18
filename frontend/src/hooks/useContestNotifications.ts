@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/auth';
+import { parseContestTimeToMs } from '../utils/contestTime';
+import { t } from '../i18n';
 
 /**
  * Custom hook: 检查即将开始的比赛并发送浏览器通知
@@ -41,7 +43,7 @@ export function useContestNotifications() {
         const now = Date.now();
 
         for (const contest of (data.contests || [])) {
-          const startTime = new Date(contest.start_time).getTime();
+          const startTime = parseContestTimeToMs(contest.start_time);
           const diff = startTime - now;
           const notified = getNotified();
 
@@ -51,8 +53,10 @@ export function useContestNotifications() {
           // 比赛即将开始（5分钟内）
           if (diff > 0 && diff <= 5 * 60 * 1000) {
             if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('比赛即将开始!', {
-                body: `${contest.title} 将在 ${Math.ceil(diff / 60000)} 分钟后开始`,
+              new Notification(t('contests.notificationStarting'), {
+                body: t('contests.notificationStartingBody')
+                  .replace('{0}', contest.title)
+                  .replace('{1}', String(Math.ceil(diff / 60000))),
                 icon: '/favicon.svg',
               });
               markNotified(contest.id);
@@ -62,8 +66,8 @@ export function useContestNotifications() {
           // 比赛已经开始
           if (diff <= 0) {
             if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('比赛已开始!', {
-                body: `${contest.title} 已经开始，快去参加吧！`,
+              new Notification(t('contests.notificationStarted'), {
+                body: t('contests.notificationStartedBody').replace('{0}', contest.title),
                 icon: '/favicon.svg',
               });
               markNotified(contest.id);

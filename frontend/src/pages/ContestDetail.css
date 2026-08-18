@@ -195,6 +195,56 @@
   margin-bottom: 16px;
 }
 
+/* ── 比赛规则 + 参赛须知面板 ── */
+.contest-info-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+  padding: 16px 20px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.contest-info-panel-section {
+  min-width: 0;
+}
+
+.contest-info-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.contest-info-panel-title svg {
+  color: var(--accent);
+}
+
+.contest-info-panel-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.contest-info-panel-list li {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.info-item-label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .meta-item {
   display: flex;
   align-items: center;
@@ -287,7 +337,7 @@
 }
 
 .problems-table-header {
-  grid-template-columns: 60px 1fr 60px 80px;
+  grid-template-columns: 60px 1fr 80px 60px 80px;
 }
 
 .rankings-table-header {
@@ -303,7 +353,7 @@
 }
 
 .problem-row {
-  grid-template-columns: 60px 1fr 60px 80px;
+  grid-template-columns: 60px 1fr 80px 60px 80px;
   align-items: center;
 }
 
@@ -640,7 +690,23 @@
 .rankings-table-enhanced .ranking-row {
   display: grid;
   grid-template-columns: 50px 1fr 80px 80px repeat(var(--problem-cols, 5), minmax(60px, 1fr));
+  column-gap: 12px;
   align-items: center;
+}
+
+/* 排行榜分页控件 */
+.rankings-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 0 4px;
+}
+
+.rankings-pagination-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 @media (max-width: 900px) {
@@ -696,7 +762,7 @@
 
   .problems-table-header,
   .problem-row {
-    grid-template-columns: 50px 1fr 50px 60px;
+    grid-template-columns: 50px 1fr 60px 50px 70px;
   }
 
   .col-actions {
@@ -715,6 +781,32 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* 状态徽章：图标 + 文字垂直居中对齐 */
+.contest-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* running 状态强调：呼吸感圆点动画 */
+.contest-status-badge.badge-success {
+  position: relative;
+}
+
+.contest-status-badge.badge-success::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: contest-status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes contest-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* ── Virtual participant flag ── */
@@ -824,4 +916,203 @@
     padding: 8px 10px;
     font-size: 12px;
   }
+}
+
+/* ═══════════════════════════════════════════════════
+   赛时公告 (Announcements)
+   ═══════════════════════════════════════════════════ */
+.contest-announcements {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.contest-announcements .tab-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 发布表单：与答疑输入框一致的卡片内边距 */
+.announcement-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.announcement-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.announcement-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 公告卡片：克制风格，与题目表格一致（无 hover 大阴影） */
+.announcement-item {
+  position: relative;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.announcement-item.card:hover,
+.announcement-item:hover {
+  border-color: var(--border-hover);
+  box-shadow: none;
+}
+
+/* 置顶：顶部 accent 细条代替右上角角标，避免硬编码中文与裁切 */
+.announcement-item.is-pinned {
+  border-color: var(--border-hover);
+}
+
+.announcement-item.is-pinned::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 20px;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--accent);
+}
+
+.announcement-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.announcement-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.announcement-content {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.announcement-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.announcement-author {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.announcement-dot {
+  color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════════════
+   赛时私密答疑 (Clarifications)
+   ═══════════════════════════════════════════════════ */
+.contest-clarifications {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.clarification-composer {
+  padding: 16px 20px;
+}
+
+.clarification-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.clarification-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.clarification-item {
+  padding: 16px 20px;
+  transition: box-shadow var(--transition), border-color var(--transition);
+}
+
+.clarification-item:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-lg);
+}
+
+.clarification-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.clarification-author {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.clarification-question {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.clarification-answer {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--success);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.clarification-answer-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.clarification-reply {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.clarification-reply .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.clarification-pending {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }

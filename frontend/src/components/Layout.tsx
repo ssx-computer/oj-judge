@@ -10,6 +10,7 @@ import { useAuthStore } from '../store/auth';
 import { useSiteConfig } from '../hooks/useSiteConfig';
 import { useContestNotifications } from '../hooks/useContestNotifications';
 import { api } from '../api/client';
+import DOMPurify from 'dompurify';
 import { t } from '../i18n';
 import './Layout.css';
 
@@ -117,7 +118,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               </span>
             )}
             {config.footer.text && (
-              <span className="footer-custom-text" dangerouslySetInnerHTML={{ __html: config.footer.text }} />
+              <span className="footer-custom-text" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(config.footer.text) }} />
             )}
             {!config.footer.text && (
               <span>

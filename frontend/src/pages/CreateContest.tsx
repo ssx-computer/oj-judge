@@ -6,12 +6,7 @@ import { Trophy, ChevronRight, Plus, X, Send, Edit3 } from 'lucide-react';
 import { t } from '../i18n';
 import './CreateContest.css';
 
-function toLocalDatetimeString(dateStr: string) {
-  const d = new Date(dateStr);
-  const offset = d.getTimezoneOffset();
-  const local = new Date(d.getTime() - offset * 60000);
-  return local.toISOString().slice(0, 16);
-}
+import { toLocalDatetimeString } from '../utils/contestTime';
 
 export default function CreateContest() {
   const { user } = useAuthStore();
@@ -25,6 +20,7 @@ export default function CreateContest() {
   const [endTime, setEndTime] = useState('');
   const [isPublic, setIsPublic] = useState(true);
   const [scoringType, setScoringType] = useState<'oi' | 'icpc' | 'ioi'>('icpc');
+  const [freezeMinutes, setFreezeMinutes] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -49,6 +45,7 @@ export default function CreateContest() {
         if (contest.scoring_type === 'oi' || contest.scoring_type === 'ioi' || contest.scoring_type === 'icpc') {
           setScoringType(contest.scoring_type);
         }
+        setFreezeMinutes(contest.freeze_minutes ?? 0);
 
         // Format datetime for input fields (YYYY-MM-DDTHH:mm)
         if (contest.start_time) {
@@ -118,7 +115,12 @@ export default function CreateContest() {
     }
   }, [searchQuery, selectedProblems]);
 
-  if (!user || user.role !== 'admin') {
+  // 权限与后端 contestAdminMiddleware 对齐:admin / super_admin 或拥有 contest_admin 权限
+  const canManageContest = !!user && (
+    user.role === 'admin' || user.role === 'super_admin' ||
+    (Array.isArray(user.permissions) && user.permissions.includes('contest_admin'))
+  );
+  if (!canManageContest) {
     return (
       <div className="empty-container">
         <h2>{t('admin.accessDenied')}</h2>
@@ -165,6 +167,7 @@ export default function CreateContest() {
       end_time: new Date(endTime).toISOString(),
       is_public: isPublic ? 1 : 0,
       scoring_type: scoringType,
+      freeze_minutes: freezeMinutes,
       problems: selectedProblems.map((p, i) => ({
         problem_id: p.id,
         label: String.fromCharCode(65 + i),
@@ -247,6 +250,19 @@ export default function CreateContest() {
               <input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} />
               {t('admin.public')}
             </label>
+          </div>
+
+          <div className="form-group">
+            <label>{t('contests.freezeMinutes')}</label>
+            <input
+              type="number"
+              min={0}
+              className="form-input"
+              value={freezeMinutes}
+              onChange={(e) => setFreezeMinutes(parseInt(e.target.value) || 0)}
+              placeholder="0"
+            />
+            <small style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('contests.freezeMinutesHint')}</small>
           </div>
 
           <div className="form-group">

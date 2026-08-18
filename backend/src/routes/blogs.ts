@@ -77,6 +77,15 @@ blogs.post('/', authMiddleware, captchaMiddleware('blog'), async (c) => {
   if (!title || !content) {
     return c.json({ success: false, error: { message: 'title and content are required', code: 'BAD_REQUEST' } }, 400);
   }
+  if (title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (content.length > 200000) {
+    return c.json({ success: false, error: { message: 'content must be at most 200000 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (tags && tags.length > 500) {
+    return c.json({ success: false, error: { message: 'tags must be at most 500 characters', code: 'BAD_REQUEST' } }, 400);
+  }
 
   const result = await c.env.DB.prepare(
     'INSERT INTO blogs (user_id, title, content, tags, status) VALUES (?, ?, ?, ?, ?)'
@@ -100,6 +109,16 @@ blogs.put('/:id', authMiddleware, async (c) => {
 
   const body = await c.req.json();
   const { title, content, tags, status } = body;
+
+  if (title !== undefined && title.length > 200) {
+    return c.json({ success: false, error: { message: 'title must be at most 200 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (content !== undefined && content.length > 200000) {
+    return c.json({ success: false, error: { message: 'content must be at most 200000 characters', code: 'BAD_REQUEST' } }, 400);
+  }
+  if (tags !== undefined && tags.length > 500) {
+    return c.json({ success: false, error: { message: 'tags must be at most 500 characters', code: 'BAD_REQUEST' } }, 400);
+  }
 
   await c.env.DB.prepare(
     `UPDATE blogs SET title = COALESCE(?, title), content = COALESCE(?, content),

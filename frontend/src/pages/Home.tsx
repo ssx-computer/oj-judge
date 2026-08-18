@@ -9,9 +9,11 @@ import {
 } from 'lucide-react';
 import { DIFFICULTY_COLORS } from '../constants';
 import { t } from '../i18n';
+import DOMPurify from 'dompurify';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useSiteConfig } from '../hooks/useSiteConfig';
 import { useNow } from '../hooks/useNow';
+import { parseContestTimeToMs } from '../utils/contestTime';
 import AdSlot from '../components/AdSlot';
 import './Home.css';
 
@@ -117,8 +119,8 @@ export default function Home() {
   }, [user, fetchAll, fetchHitokoto, fetchRecommendations, fetchTopUsers]);
 
   const getContestStatus = (contest: any) => {
-    const start = new Date(contest.start_time).getTime();
-    const end = new Date(contest.end_time).getTime();
+    const start = parseContestTimeToMs(contest.start_time);
+    const end = parseContestTimeToMs(contest.end_time);
     if (now < start) return 'upcoming';
     if (now >= start && now <= end) return 'running';
     return 'ended';
@@ -174,7 +176,7 @@ export default function Home() {
       {announcement && !dismissedAnnouncement && (
         <div className="home-announcement">
           <Megaphone size={16} className="announcement-icon" />
-          <div className="announcement-content" dangerouslySetInnerHTML={{ __html: announcement }} />
+          <div className="announcement-content" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(announcement) }} />
           <button className="announcement-close" onClick={() => setDismissedAnnouncement(true)}>
             <X size={14} />
           </button>

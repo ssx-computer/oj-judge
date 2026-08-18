@@ -509,9 +509,15 @@ auth.post('/send-verification-code', createRateLimiter('sendVerificationCode', 3
   // Send email via Cloudflare Email Binding
   const sendEmail = (c.env as any).SEND_EMAIL;
   if (!sendEmail || typeof sendEmail.send !== 'function') {
-    // Development mode — binding not available, return code directly
-    console.log('SEND_EMAIL binding not available (dev mode), returning code:', code);
-    return c.json({ success: true, data: { message: 'Verification code sent', code } });
+    // 仅本地开发环境回显验证码(便于测试);生产环境无 binding 时拒绝,避免验证码泄露
+    try {
+      const url = new URL(c.req.url);
+      if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        console.log('SEND_EMAIL binding not available (dev mode), returning code:', code);
+        return c.json({ success: true, data: { message: 'Verification code sent', code } });
+      }
+    } catch { /* ignore parse errors */ }
+    return c.json({ success: false, error: { message: 'Email service is not configured', code: 'EMAIL_NOT_CONFIGURED' } }, 500);
   }
 
   try {
@@ -579,8 +585,15 @@ auth.post('/forgot-password', createRateLimiter('forgotPassword', 3, 300_000), a
   // Send email via Cloudflare Email Binding
   const sendEmail = (c.env as any).SEND_EMAIL;
   if (!sendEmail || typeof sendEmail.send !== 'function') {
-    console.log('SEND_EMAIL binding not available (dev mode), reset URL:', resetUrl);
-    return c.json({ success: true, data: { message: 'If this email is registered, a reset link has been sent.', resetUrl } });
+    // 仅本地开发环境回显重置链接(便于测试);生产环境无 binding 时不泄露 resetUrl
+    try {
+      const url = new URL(c.req.url);
+      if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        console.log('SEND_EMAIL binding not available (dev mode), reset URL:', resetUrl);
+        return c.json({ success: true, data: { message: 'If this email is registered, a reset link has been sent.', resetUrl } });
+      }
+    } catch { /* ignore parse errors */ }
+    return c.json({ success: false, error: { message: 'Email service is not configured', code: 'EMAIL_NOT_CONFIGURED' } }, 500);
   }
 
   try {

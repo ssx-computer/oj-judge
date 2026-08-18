@@ -260,7 +260,7 @@ users.get('/contests', authMiddleware, async (c) => {
   const user = c.get('user');
 
   const results = await c.env.DB.prepare(`
-    SELECT c.*, cp.joined_at,
+    SELECT c.*, cp.joined_at, cp.final_rank, cp.final_rating_delta,
       (SELECT COUNT(*) FROM contest_participants WHERE contest_id = c.id) as participant_count
     FROM contests c
     JOIN contest_participants cp ON c.id = cp.contest_id

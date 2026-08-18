@@ -140,3 +140,19 @@
   font-size: 14px;
   color: var(--text-secondary);
 }
+
+/* 上传「是否公开」勾选项 */
+.myfiles-public-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.myfiles-public-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
