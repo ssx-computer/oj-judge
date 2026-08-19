@@ -813,21 +813,23 @@ class ApiClient {
     throw new Error('Network error. Please check your connection and try again.');
   }
 
-  async getProblems(params?: { page?: number; pageSize?: number; search?: string; tag?: string; difficulty?: string }) {
+  async getProblems(params?: { page?: number; pageSize?: number; search?: string; tag?: string; tagId?: number; difficulty?: string }) {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
     if (params?.pageSize) query.set('pageSize', String(params.pageSize));
     if (params?.search) query.set('search', params.search);
     if (params?.tag) query.set('tag', params.tag);
+    if (params?.tagId) query.set('tag_id', String(params.tagId));
     if (params?.difficulty) query.set('difficulty', params.difficulty);
     return this.request<{ problems: ProblemListItem[]; pagination: Pagination }>(`/problems?${query.toString()}`);
   }
 
-  // 随机一题(可选 difficulty/tag 过滤)
-  async getRandomProblem(params?: { difficulty?: string; tag?: string }) {
+  // 随机一题(可选 difficulty/tag/tagId 过滤)
+  async getRandomProblem(params?: { difficulty?: string; tag?: string; tagId?: number }) {
     const query = new URLSearchParams();
     if (params?.difficulty) query.set('difficulty', params.difficulty);
     if (params?.tag) query.set('tag', params.tag);
+    if (params?.tagId) query.set('tag_id', String(params.tagId));
     const qs = query.toString();
     return this.request<{ problem: { id: number; title: string; slug: string; difficulty: string } }>(`/problems/random${qs ? `?${qs}` : ''}`);
   }
@@ -864,16 +866,58 @@ class ApiClient {
     return this.request<{ categories: TagCategory[] }>('/tags/problems/tags-tree');
   }
 
-  // Problem-specific tags
+  // Problem-specific tags (后端挂载于 /tags 前缀下)
   async getProblemTagsById(problemId: number) {
-    return this.request<{ tags: Tag[] }>(`/problems/${problemId}/tags`);
+    return this.request<{ tags: Tag[] }>(`/tags/problems/${problemId}/tags`);
   }
 
-  // Set problem tags
+  // Set problem tags (后端为 POST,挂载于 /tags 前缀下)
   async setProblemTags(problemId: number, tagIds: number[]) {
-    return this.request<{ message: string }>(`/problems/${problemId}/tags`, {
-      method: 'PUT',
+    return this.request<{ message: string }>(`/tags/problems/${problemId}/tags`, {
+      method: 'POST',
       body: JSON.stringify({ tag_ids: tagIds }),
+    });
+  }
+
+  // ── Tag category CRUD (admin) ──
+  async createTagCategory(data: { name: string; slug: string; icon?: string; sort_order?: number }) {
+    return this.request<{ id: number; message: string }>(`/tags/categories`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTagCategory(id: number, data: { name?: string; slug?: string; icon?: string; sort_order?: number }) {
+    return this.request<{ message: string }>(`/tags/categories/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTagCategory(id: number) {
+    return this.request<{ message: string }>(`/tags/categories/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ── Tag CRUD (admin) ──
+  async createTag(data: { category_id: number; name: string; slug: string; sort_order?: number }) {
+    return this.request<{ id: number; message: string }>(`/tags`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTag(id: number, data: { category_id?: number; name?: string; slug?: string; sort_order?: number }) {
+    return this.request<{ message: string }>(`/tags/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTag(id: number) {
+    return this.request<{ message: string }>(`/tags/${id}`, {
+      method: 'DELETE',
     });
   }
 
@@ -887,7 +931,7 @@ class ApiClient {
 
   // User rating info
   async getUserRating(username: string) {
-    return this.request<{ rating: number; max_rating: number; history: RatingHistoryEntry[] }>(`/users/${username}/rating`);
+    return this.request<{ rating: number; max_rating: number; history: RatingHistoryEntry[] }>(`/ratings/users/${username}/rating`);
   }
 
   async getProblem(slug: string) {
@@ -963,10 +1007,6 @@ class ApiClient {
 
   async getSubmissionLogs(id: number) {
     return this.request<{ logs: JudgeLog[] }>(`/submissions/${id}/logs`);
-  }
-
-  async exportSubmissions(format: 'csv' | 'json' = 'csv') {
-    return this.request<{ submissions?: Submission[] } | string>(`/submissions/export?format=${format}`);
   }
 
   async compareSubmissions(id1: number, id2: number) {
@@ -1259,7 +1299,7 @@ class ApiClient {
   }
 
   async getProblemSpj(problemId: number) {
-    return this.request<{ spj_code: string; spj_language: string }>(`/problems/${problemId}/spj`);
+    return this.request<{ language: string; code: string }>(`/problems/${problemId}/spj`);
   }
 
   async updateProblemSpj(problemId: number, language: string, code: string) {
@@ -1273,10 +1313,6 @@ class ApiClient {
     return this.request<{ message: string }>(`/problems/${problemId}/spj`, {
       method: 'DELETE',
     });
-  }
-
-  getGithubAuthUrl() {
-    return `${this.baseUrl}/auth/github`;
   }
 
   // Contests
@@ -1743,10 +1779,6 @@ class ApiClient {
 
   async getUserLanguageStats() {
     return this.request<{ languages: { language: string; total: number; accepted: number }[] }>('/users/language-stats');
-  }
-
-  async getSetting(key: string) {
-    return this.request<{ value: string }>(`/settings/${key}`);
   }
 
   async updateSettings(data: Record<string, string>) {

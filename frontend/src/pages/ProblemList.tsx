@@ -31,6 +31,8 @@ export default function ProblemList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [allTags, setAllTags] = useState<string[]>([]);
+  const [tagTree, setTagTree] = useState<any[]>([]);
+  const [selectedTagId, setSelectedTagId] = useState<number | 0>(0);
   const [solvedProblems, setSolvedProblems] = useState<Set<number>>(new Set());
   const [attemptedProblems, setAttemptedProblems] = useState<Set<number>>(new Set());
   useDocumentTitle(t('problemList.title'));
@@ -42,6 +44,12 @@ export default function ProblemList() {
     } catch {
       // fallback: extract from current page results
     }
+    try {
+      const tree = await api.getTagsTree();
+      setTagTree(tree.categories || []);
+    } catch {
+      // 标签树不可用时静默忽略(不影响题库列表)
+    }
   }, []);
 
   const fetchProblems = useCallback(async () => {
@@ -51,6 +59,7 @@ export default function ProblemList() {
         pageSize: 20,
         search: debouncedSearch || undefined,
         tag: selectedTag || undefined,
+        tagId: selectedTagId || undefined,
         difficulty: selectedDifficulty || undefined,
       });
       setProblems(data.problems);
@@ -63,7 +72,7 @@ export default function ProblemList() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, selectedTag, selectedDifficulty, addToast]);
+  }, [page, debouncedSearch, selectedTag, selectedTagId, selectedDifficulty, addToast]);
 
   const fetchUserProgress = useCallback(async () => {
     try {
@@ -120,18 +129,20 @@ export default function ProblemList() {
     setSearch('');
     setDebouncedSearch('');
     setSelectedTag('');
+    setSelectedTagId(0);
     setSelectedDifficulty('');
     setPassRateFilter('');
     setStatusFilter('');
     setPage(1);
   };
 
-  // 随机一题:按当前筛选条件(difficulty/tag)随机跳转
+  // 随机一题:按当前筛选条件(difficulty/tag/tagId)随机跳转
   const handleRandomProblem = async () => {
     try {
       const { problem } = await api.getRandomProblem({
         difficulty: selectedDifficulty || undefined,
         tag: selectedTag || undefined,
+        tagId: selectedTagId || undefined,
       });
       navigate(`/problems/${problem.slug}`);
     } catch (e: any) {
@@ -191,6 +202,28 @@ export default function ProblemList() {
                 </button>
               ))
             )}
+          </div>
+        )}
+
+        {tagTree.length > 0 && (
+          <div className="tag-tree-filter">
+            <Tag size={14} />
+            <span className="filter-label">{t('problemList.categoryTags')}:</span>
+            {tagTree.map((cat) => (
+              <span key={cat.id} className="tag-tree-group">
+                <span className="tag-tree-category">{cat.name}:</span>
+                {cat.tags?.map((tag: any) => (
+                  <button
+                    key={tag.id}
+                    className={`tag-chip${selectedTagId === tag.id ? ' active' : ''}`}
+                    onClick={() => { setSelectedTagId(selectedTagId === tag.id ? 0 : tag.id); setPage(1); }}
+                    title={tag.problem_count ? `${tag.name} (${tag.problem_count})` : tag.name}
+                  >
+                    {tag.name}
+                  </button>
+                ))}
+              </span>
+            ))}
           </div>
         )}
 

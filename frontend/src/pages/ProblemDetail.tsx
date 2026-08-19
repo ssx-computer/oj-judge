@@ -14,7 +14,7 @@ import { useThemeStore } from '../store/theme';
 import { useToastStore } from '../store/toast';
 import StatusBadge from '../components/StatusBadge';
 import Captcha, { type CaptchaHandle } from '../components/Captcha';
-import { Send, Clock, MemoryStick, ChevronLeft, ChevronRight, Tag, Heart, CheckCircle, XCircle, AlertCircle, Users, BookOpen, MessageSquare, ThumbsUp, Eye, Plus, X, Sparkles, Flag } from 'lucide-react';
+import { Send, Clock, MemoryStick, ChevronLeft, ChevronRight, Tag, Heart, CheckCircle, XCircle, AlertCircle, Users, BookOpen, MessageSquare, ThumbsUp, Eye, Plus, X, Sparkles, Flag, Save, Trash2 } from 'lucide-react';
 import { LANGUAGES, LANGUAGE_TEMPLATES } from '../constants';
 import RatingBadge from '../components/RatingBadge';
 import { renderMarkdown } from '../utils/markdown';
@@ -87,6 +87,13 @@ export default function ProblemDetail() {
   const [discussionFormCategory, setDiscussionFormCategory] = useState('general');
   const [discussionFormContent, setDiscussionFormContent] = useState('');
   const [discussionSubmitting, setDiscussionSubmitting] = useState(false);
+
+  // ── Notes state ──
+  const [note, setNote] = useState<any>(null);
+  const [noteContent, setNoteContent] = useState('');
+  const [noteIsPublic, setNoteIsPublic] = useState(false);
+  const [noteLoading, setNoteLoading] = useState(false);
+  const [noteSaving, setNoteSaving] = useState(false);
 
   // Ref for polling cleanup (Bug 2 fix)
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -351,6 +358,62 @@ export default function ProblemDetail() {
       useToastStore.getState().addToast('error', e.message || t('common.error'));
     } finally {
       if (isMountedRef.current) setDiscussionSubmitting(false);
+    }
+  };
+
+  // ── Fetch note when notes tab is active ──
+  useEffect(() => {
+    if (activeTab !== 'notes' || !user || !problem?.id) return;
+    let cancelled = false;
+    setNoteLoading(true);
+    api.getNote(problem.id)
+      .then((data: any) => {
+        if (cancelled) return;
+        setNote(data.note || null);
+        setNoteContent(data.note?.content || '');
+        setNoteIsPublic(!!data.note?.is_public);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setNote(null);
+        setNoteContent('');
+        setNoteIsPublic(false);
+      })
+      .finally(() => {
+        if (!cancelled) setNoteLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeTab, user, problem?.id]);
+
+  // ── Note save / delete ──
+  const handleNoteSave = async () => {
+    if (!problem?.id || noteSaving) return;
+    setNoteSaving(true);
+    try {
+      await api.saveNote(problem.id, noteContent, noteIsPublic);
+      setNote({ content: noteContent, is_public: noteIsPublic ? 1 : 0 });
+      addToast('success', t('problemDetail.noteSaved'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
+  const handleNoteDelete = async () => {
+    if (!problem?.id || noteSaving) return;
+    if (!window.confirm(t('problemDetail.noteDeleteConfirm'))) return;
+    setNoteSaving(true);
+    try {
+      await api.deleteNote(problem.id);
+      setNote(null);
+      setNoteContent('');
+      setNoteIsPublic(false);
+      addToast('success', t('problemDetail.noteDeleted'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setNoteSaving(false);
     }
   };
 
@@ -1345,6 +1408,58 @@ export default function ProblemDetail() {
                   {t('common.next')}
                 </button>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Notes Tab Content ── */}
+        {activeTab === 'notes' && (
+          <div className="tab-content notes-tab-content">
+            <div className="tab-content-toolbar">
+              <div className="tab-filter-group">
+                <label className="checkbox-label note-public-toggle">
+                  <input
+                    type="checkbox"
+                    checked={noteIsPublic}
+                    onChange={(e) => setNoteIsPublic(e.target.checked)}
+                  />
+                  {t('problemDetail.notePublic')}
+                </label>
+              </div>
+            </div>
+
+            {noteLoading ? (
+              <div className="tab-loading">
+                <div className="loading-spinner" />
+                <span>{t('common.loading')}</span>
+              </div>
+            ) : (
+              <>
+                <div className="form-group">
+                  <textarea
+                    className="form-textarea"
+                    rows={10}
+                    value={noteContent}
+                    onChange={(e) => setNoteContent(e.target.value)}
+                    placeholder={t('problemDetail.notePlaceholder')}
+                    maxLength={50000}
+                  />
+                  <div style={{marginTop:'4px'}}>
+                    <ImageUploadButton onInsert={(md) => setNoteContent(prev => prev + (prev ? '\n' : '') + md)} />
+                  </div>
+                </div>
+                <div className="form-actions">
+                  {note && (
+                    <button className="btn btn-danger btn-sm" onClick={handleNoteDelete} disabled={noteSaving}>
+                      <Trash2 size={14} /> {t('common.delete')}
+                    </button>
+                  )}
+                  <button className="btn btn-primary btn-sm" onClick={handleNoteSave} disabled={noteSaving}>
+                    <Save size={14} />
+                    {noteSaving ? t('problemDetail.savingNote') : t('problemDetail.saveNote')}
+                  </button>
+                </div>
+              </>
             )}
           </div>
         )}

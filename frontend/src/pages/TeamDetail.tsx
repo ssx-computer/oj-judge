@@ -1414,6 +1414,18 @@ function ProblemSetsTab({ teamId, isMember }: { teamId: number; isMember: boolea
     }
   };
 
+  const handleRemoveProblem = async (itemId: number) => {
+    if (!selectedSet) return;
+    if (!window.confirm(t('teams.confirmRemoveProblemFromSet'))) return;
+    try {
+      await api.removeTeamProblemSetItem(teamId, selectedSet.problem_set.id, itemId);
+      addToast('success', t('teams.problemRemovedFromSet'));
+      handleViewSet(selectedSet.problem_set.id);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
   if (selectedSet) {
     return (
       <div>
@@ -1436,6 +1448,16 @@ function ProblemSetsTab({ teamId, isMember }: { teamId: number; isMember: boolea
                 <Link to={`/team/${teamId}/problem/${p.problem_id}`}>{p.title}</Link>
                 <span className={`diff-badge diff-${p.difficulty?.toLowerCase()}`}>{p.difficulty}</span>
                 {!!p.solved && <span className="badge badge-success"><Check size={12} /> {t('problemList.accepted')}</span>}
+                {isMember && (
+                  <button
+                    className="btn-icon-sm danger"
+                    style={{ marginLeft: 'auto' }}
+                    onClick={() => handleRemoveProblem(p.id)}
+                    title={t('teams.removeProblem')}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
             ))}
           </div>

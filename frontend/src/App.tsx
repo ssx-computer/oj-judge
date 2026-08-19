@@ -73,6 +73,7 @@ const AdminSolutionReview = lazy(() => import('./pages/admin/AdminSolutionReview
 const AdminReports = lazy(() => import('./pages/admin/AdminReports'));
 const AdminBlogs = lazy(() => import('./pages/admin/AdminBlogs'));
 const AdminTeams = lazy(() => import('./pages/admin/AdminTeams'));
+const AdminTags = lazy(() => import('./pages/admin/AdminTags'));
 const AdminMessages = lazy(() => import('./pages/admin/AdminMessages'));
 const AdminAds = lazy(() => import('./pages/admin/AdminAds'));
 const AdminAnnouncements = lazy(() => import('./pages/admin/AdminAnnouncements'));
@@ -180,6 +181,7 @@ function App() {
               <Route path="reports" element={<AdminReports />} />
               <Route path="blogs" element={<AdminBlogs />} />
               <Route path="teams" element={<AdminTeams />} />
+              <Route path="tags" element={<AdminTags />} />
               <Route path="messages" element={<AdminMessages />} />
               <Route path="ads" element={<AdminAds />} />
             </Route>

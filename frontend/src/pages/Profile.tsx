@@ -11,7 +11,7 @@ import { DIFFICULTY_COLORS } from '../constants';
 import RatingBadge from '../components/RatingBadge';
 import { getRatingColor, getRatingTier } from '../utils/rating';
 import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
-import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, Mail, Users, TrendingUp, Award, Download, Tag, BookX } from 'lucide-react';
+import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, Mail, Users, TrendingUp, Award, Download, Tag, BookX, RefreshCw } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import FollowButton from '../components/FollowButton';
@@ -33,6 +33,7 @@ export default function Profile() {
   const [ratingHistory, setRatingHistory] = useState<any[]>([]);
   const [ratingInfo, setRatingInfo] = useState<{ rating: number; max_rating: number } | null>(null);
   const [achievements, setAchievements] = useState<any[]>([]);
+  const [checkingAchievements, setCheckingAchievements] = useState(false);
 
   // Edit profile state
   const [editing, setEditing] = useState(false);
@@ -134,6 +135,27 @@ export default function Profile() {
     };
     if (data?.user) fetchExtraData();
   }, [data?.user, isOwnProfile, currentUser, username]);
+
+  // ── 重新检查成就解锁状态(仅本人) ──
+  const handleCheckAchievements = async () => {
+    if (checkingAchievements) return;
+    setCheckingAchievements(true);
+    try {
+      const result = await api.checkAchievements();
+      if (result.new_achievements && result.new_achievements.length > 0) {
+        addToast('success', t('profile.newAchievements').replace('{0}', String(result.new_achievements.length)));
+      } else {
+        addToast('info', t('profile.noNewAchievements'));
+      }
+      // 刷新成就列表
+      const achData = await api.getAchievements();
+      setAchievements(achData.achievements || []);
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setCheckingAchievements(false);
+    }
+  };
 
   if (loading) {
     return <LoadingSpinner message={t('profile.loadingProfile')} />;
@@ -407,6 +429,17 @@ export default function Profile() {
             <span className="achievement-progress">
               {achievements.filter((a: any) => a.earned).length} / {achievements.length}
             </span>
+            {isOwnProfile && (
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{ marginLeft: 'auto' }}
+                onClick={handleCheckAchievements}
+                disabled={checkingAchievements}
+              >
+                <RefreshCw size={13} />
+                {checkingAchievements ? t('profile.checkingAchievements') : t('profile.recheckAchievements')}
+              </button>
+            )}
           </h2>
           <div className="achievements-grid">
             {achievements.map((ach: any) => (

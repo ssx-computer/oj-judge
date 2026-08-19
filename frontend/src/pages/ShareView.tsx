@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { Code2, User, Clock, AlertCircle, Calendar, ImageIcon, Lock, Unlock } from 'lucide-react';
+import { useAuthStore } from '../store/auth';
+import { useToastStore } from '../store/toast';
+import { Code2, User, Clock, AlertCircle, Calendar, ImageIcon, Lock, Unlock, Trash2 } from 'lucide-react';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { t } from '../i18n';
 import './ShareView.css';
 
 export default function ShareView() {
   const { token } = useParams<{ token: string }>();
+  const navigate = useNavigate();
+  const { user } = useAuthStore();
+  const addToast = useToastStore((s) => s.addToast);
   const [share, setShare] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -17,6 +22,20 @@ export default function ShareView() {
   const [unlocking, setUnlocking] = useState(false);
   const [wrongPassword, setWrongPassword] = useState(false);
   useDocumentTitle(share?.title || t('shares.title'));
+
+  const isOwner = !!user && !!share && (share.username === user.username || user.role === 'admin' || user.role === 'super_admin');
+
+  const handleDelete = async () => {
+    if (!token || !share) return;
+    if (!window.confirm(t('shares.deleteConfirm'))) return;
+    try {
+      await api.deleteCodeShare(token);
+      addToast('success', t('shares.shareDeleted'));
+      navigate('/');
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
 
   const loadShare = (pwd?: string) => {
     if (!token) return;
@@ -126,6 +145,11 @@ export default function ShareView() {
         <button className="btn btn-secondary btn-sm" onClick={handleDownloadImage} title={t('shares.downloadImage')}>
           <ImageIcon size={14} /> {t('shares.downloadImage')}
         </button>
+        {isOwner && (
+          <button className="btn btn-danger btn-sm" onClick={handleDelete} title={t('shares.deleteShare')}>
+            <Trash2 size={14} /> {t('shares.deleteShare')}
+          </button>
+        )}
       </div>
 
       <div className="share-meta">

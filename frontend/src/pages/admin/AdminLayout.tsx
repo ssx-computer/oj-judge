@@ -7,7 +7,7 @@ import {
   BarChart3, Plus, FileText, ClipboardList, Users, Swords,
   Ticket, BookOpen, Megaphone, Settings, Bot, FolderOpen,
   Database, Menu, X, FileSearch, ShieldBan, GraduationCap, ShieldAlert,
-  FileCheck, Flag, PenSquare, Mail, Newspaper, Link2,
+  FileCheck, Flag, PenSquare, Mail, Newspaper, Link2, Tag as TagIcon,
 } from 'lucide-react';
 import '../Admin.css';
 
@@ -23,6 +23,7 @@ const sidebarLinks: SidebarLink[] = [
   { to: 'create-problem', icon: <Plus size={18} />, label: t('admin.createProblem'), permission: 'problem_admin' },
   { to: 'problems', icon: <FileText size={18} />, label: t('admin.problemManagement'), permission: 'problem_admin' },
   { to: 'testcases', icon: <ClipboardList size={18} />, label: t('admin.addTestcases'), permission: 'problem_admin' },
+  { to: 'tags', icon: <TagIcon size={18} />, label: t('admin.tagsManagement'), permission: 'problem_admin' },
   { to: 'users', icon: <Users size={18} />, label: t('admin.userManagement'), permission: 'all' },
   { to: 'contests', icon: <Swords size={18} />, label: t('admin.contestManagement'), permission: 'contest_admin' },
   { to: 'tickets', icon: <Ticket size={18} />, label: t('admin.ticketManagement'), permission: 'ticket_admin' },

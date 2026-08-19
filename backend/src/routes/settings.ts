@@ -57,6 +57,30 @@ settings.get('/', async (c) => {
   return c.json({ success: true, data });
 });
 
+// GET /settings/stats - 站点统计(公开,无鉴权;供首页等展示站点规模)
+// 注意:该静态路由必须注册在 GET /:key 之前,否则会被参数路由捕获
+settings.get('/stats', async (c) => {
+  const [
+    problemCount, userCount, submissionCount, todaySubmissions,
+  ] = await Promise.all([
+    c.env.DB.prepare('SELECT COUNT(*) as count FROM problems').first(),
+    c.env.DB.prepare('SELECT COUNT(*) as count FROM users').first(),
+    c.env.DB.prepare('SELECT COUNT(*) as count FROM submissions').first(),
+    c.env.DB.prepare("SELECT COUNT(*) as count FROM submissions WHERE date(created_at) = date('now')").first(),
+  ]);
+
+  c.header('Cache-Control', 'public, max-age=60, s-maxage=120');
+  return c.json({
+    success: true,
+    data: {
+      problems: (problemCount as any)?.count || 0,
+      users: (userCount as any)?.count || 0,
+      submissions: (submissionCount as any)?.count || 0,
+      today_submissions: (todaySubmissions as any)?.count || 0,
+    },
+  });
+});
+
 // GET /settings/:key - Get a specific setting (no auth required)
 settings.get('/:key', async (c) => {
   const key = c.req.param('key');

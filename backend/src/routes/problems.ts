@@ -35,6 +35,7 @@ problems.get('/', async (c) => {
   const pageSize = Math.min(50, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
   const search = c.req.query('search') || '';
   const tag = c.req.query('tag') || '';
+  const tagId = c.req.query('tag_id') ? parseInt(c.req.query('tag_id') || '0') : 0;
   const difficulty = c.req.query('difficulty') || '';
   const offset = (page - 1) * pageSize;
 
@@ -61,6 +62,13 @@ problems.get('/', async (c) => {
     countQuery += ' AND tags LIKE ?';
     dataQuery += ' AND p.tags LIKE ?';
     binds.push(`%"${escapeLikeWildcard(tag)}"%`);
+  }
+
+  if (tagId > 0) {
+    // 按分类标签树中的标签 id 过滤(通过 problem_tags 关联表)
+    countQuery += ' AND EXISTS (SELECT 1 FROM problem_tags pt WHERE pt.problem_id = problems.id AND pt.tag_id = ?)';
+    dataQuery += ' AND EXISTS (SELECT 1 FROM problem_tags pt WHERE pt.problem_id = p.id AND pt.tag_id = ?)';
+    binds.push(tagId);
   }
 
   if (difficulty) {
@@ -108,6 +116,7 @@ problems.get('/', async (c) => {
 problems.get('/random', async (c) => {
   const difficulty = c.req.query('difficulty') || '';
   const tag = c.req.query('tag') || '';
+  const tagId = c.req.query('tag_id') ? parseInt(c.req.query('tag_id') || '0') : 0;
 
   let query = `SELECT id, title, slug, difficulty FROM problems
      WHERE is_public = 1
@@ -122,6 +131,10 @@ problems.get('/random', async (c) => {
   if (tag) {
     query += ' AND tags LIKE ?';
     binds.push(`%"${escapeLikeWildcard(tag)}"%`);
+  }
+  if (tagId > 0) {
+    query += ' AND EXISTS (SELECT 1 FROM problem_tags pt WHERE pt.problem_id = problems.id AND pt.tag_id = ?)';
+    binds.push(tagId);
   }
 
   query += ' ORDER BY RANDOM() LIMIT 1';

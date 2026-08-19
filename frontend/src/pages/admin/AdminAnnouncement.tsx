@@ -4,7 +4,7 @@ import { api } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { t } from '../../i18n';
-import { Save } from 'lucide-react';
+import { Save, Send } from 'lucide-react';
 import '../Admin.css';
 
 export default function AdminAnnouncement() {
@@ -13,6 +13,13 @@ export default function AdminAnnouncement() {
   const [announcementContent, setAnnouncementContent] = useState('');
   const [announcementSaving, setAnnouncementSaving] = useState(false);
   const [announcementLoaded, setAnnouncementLoaded] = useState(false);
+
+  // 系统公告群发(站内通知)
+  const [sysTitle, setSysTitle] = useState('');
+  const [sysContent, setSysContent] = useState('');
+  const [sysLink, setSysLink] = useState('');
+  const [sysSending, setSysSending] = useState(false);
+  const [sysResult, setSysResult] = useState('');
 
   const fetchAnnouncement = useCallback(async () => {
     try {
@@ -40,6 +47,27 @@ export default function AdminAnnouncement() {
       addToast('error', e.message || t('common.error'));
     } finally {
       setAnnouncementSaving(false);
+    }
+  };
+
+  const handleSendSystemAnnouncement = async () => {
+    if (!sysTitle.trim() || !sysContent.trim()) {
+      addToast('error', t('admin.sysAnnouncementRequired'));
+      return;
+    }
+    setSysSending(true);
+    setSysResult('');
+    try {
+      const data = await api.sendSystemAnnouncement(sysTitle.trim(), sysContent.trim(), sysLink.trim() || undefined);
+      setSysResult(t('admin.sysAnnouncementSent').replace('{0}', String(data.sent)));
+      setSysTitle('');
+      setSysContent('');
+      setSysLink('');
+      addToast('success', t('admin.sysAnnouncementSent').replace('{0}', String(data.sent)));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSysSending(false);
     }
   };
 
@@ -83,6 +111,59 @@ export default function AdminAnnouncement() {
         >
           {t('admin.announcementClear')}
         </button>
+      </div>
+
+      <hr style={{ margin: '24px 0', border: 'none', borderTop: '1px solid var(--border-color)' }} />
+
+      <h3 style={{ marginBottom: 8 }}>
+        <Send size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+        {t('admin.sysAnnouncementTitle')}
+      </h3>
+      <p style={{fontSize:'13px',color:'var(--text-secondary)',marginBottom:'16px'}}>
+        {t('admin.sysAnnouncementHint')}
+      </p>
+      <div className="form-group">
+        <label>{t('admin.sysAnnouncementSubject')}</label>
+        <input
+          type="text"
+          value={sysTitle}
+          onChange={(e) => setSysTitle(e.target.value)}
+          maxLength={200}
+          placeholder={t('admin.sysAnnouncementSubjectPlaceholder')}
+        />
+      </div>
+      <div className="form-group">
+        <label>{t('admin.sysAnnouncementBody')}</label>
+        <textarea
+          rows={5}
+          value={sysContent}
+          onChange={(e) => setSysContent(e.target.value)}
+          maxLength={5000}
+          placeholder={t('admin.sysAnnouncementBodyPlaceholder')}
+        />
+      </div>
+      <div className="form-group">
+        <label>{t('admin.sysAnnouncementLink')}</label>
+        <input
+          type="text"
+          value={sysLink}
+          onChange={(e) => setSysLink(e.target.value)}
+          maxLength={500}
+          placeholder="https://..."
+        />
+      </div>
+      <div className="form-actions">
+        <button
+          className="btn btn-primary"
+          onClick={handleSendSystemAnnouncement}
+          disabled={sysSending}
+        >
+          <Send size={16} />
+          {sysSending ? t('admin.sysAnnouncementSending') : t('admin.sysAnnouncementSend')}
+        </button>
+        {sysResult && (
+          <span style={{ color: 'var(--success)', fontSize: 13 }}>{sysResult}</span>
+        )}
       </div>
     </div>
   );

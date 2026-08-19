@@ -7,12 +7,14 @@ import { DIFFICULTY_COLORS } from '../../constants';
 import { t } from '../../i18n';
 import {
   Plus, Save, Trash2, X, ChevronUp, ChevronDown, Upload, Download, FileArchive,
-  FileCheck, FileText, Gauge, Inbox, AlertCircle, CheckSquare, Copy, Pencil,
+  FileCheck, FileText, Gauge, Inbox, AlertCircle, CheckSquare, Copy, Pencil, FileCode,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import '../Admin.css';
 // 复用团队测试数据面板的完整视觉规范(.team-testcase-panel 作用域样式)
 import '../Teams.css';
+
+const SPJ_LANGUAGES = ['python', 'cpp', 'java', 'javascript', 'c', 'go', 'rust'];
 
 export default function AdminTestcases() {
   useDocumentTitle(t('admin.addTestcases'));
@@ -37,6 +39,12 @@ export default function AdminTestcases() {
   const [selectedProblemJudgeType, setSelectedProblemJudgeType] = useState<string>('default');
   const testcaseSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── SPJ 管理状态 ──
+  const [spjCode, setSpjCode] = useState('');
+  const [spjLanguage, setSpjLanguage] = useState('cpp');
+  const [spjLoading, setSpjLoading] = useState(false);
+  const [spjSaving, setSpjSaving] = useState(false);
+
   // 容量限制(与团队面板默认一致:单题总量 5MB)
   const maxTotalTestcaseSize = 5 * 1024 * 1024;
   const existingTotalSize = existingTestcases.reduce(
@@ -59,6 +67,22 @@ export default function AdminTestcases() {
     setSelectedTestcases(new Set());
     setEditingIdx(null);
     setImportPreview(null);
+    // 重置并加载 SPJ 代码(仅当题目为 SPJ 判题时)
+    setSpjCode('');
+    setSpjLanguage('cpp');
+    if (problem.judge_type === 'spj') {
+      setSpjLoading(true);
+      try {
+        const spjData: any = await api.getProblemSpj(problem.id);
+        setSpjCode(spjData.code || '');
+        setSpjLanguage(spjData.language || 'cpp');
+      } catch (e) {
+        console.error('Failed to fetch SPJ code:', e);
+        setSpjCode('');
+      } finally {
+        setSpjLoading(false);
+      }
+    }
     try {
       const data = await api.getProblemTestcases(problem.id);
       setExistingTestcases(data.testcases);
@@ -67,6 +91,42 @@ export default function AdminTestcases() {
       setExistingTestcases([]);
     }
   }, []);
+
+  // ── SPJ 代码保存 / 删除 ──
+  const handleSaveSpj = async () => {
+    if (!selectedTestcaseProblem || spjSaving) return;
+    if (!spjCode.trim()) {
+      addToast('error', t('admin.spjCodeRequired'));
+      return;
+    }
+    setSpjSaving(true);
+    try {
+      await api.updateProblemSpj(selectedTestcaseProblem.id, spjLanguage, spjCode);
+      setSelectedProblemJudgeType('spj');
+      addToast('success', t('admin.spjSaved'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSpjSaving(false);
+    }
+  };
+
+  const handleDeleteSpj = async () => {
+    if (!selectedTestcaseProblem || spjSaving) return;
+    if (!window.confirm(t('admin.spjDeleteConfirm'))) return;
+    setSpjSaving(true);
+    try {
+      await api.deleteProblemSpj(selectedTestcaseProblem.id);
+      setSpjCode('');
+      setSpjLanguage('cpp');
+      setSelectedProblemJudgeType('default');
+      addToast('success', t('admin.spjDeleted'));
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    } finally {
+      setSpjSaving(false);
+    }
+  };
 
   // Handle navigation from Create Problem page
   useEffect(() => {
@@ -659,6 +719,56 @@ export default function AdminTestcases() {
                       )}
                     </div>
                   ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ── SPJ 管理面板 ── */}
+          <div className="testcase-spj-panel" style={{ marginTop: 16 }}>
+            <h3><FileCode size={16} style={{ color: 'var(--primary)' }} /> {t('admin.specialJudge')}</h3>
+            {spjLoading ? (
+              <div className="tab-loading">
+                <div className="loading-spinner" />
+                <span>{t('common.loading')}</span>
+              </div>
+            ) : (
+              <>
+                <p className="spj-hint">{t('admin.spjHint')}</p>
+                <div className="form-group">
+                  <label>{t('admin.spjLanguage')}</label>
+                  <select
+                    className="form-select"
+                    value={spjLanguage}
+                    onChange={(e) => setSpjLanguage(e.target.value)}
+                    disabled={spjSaving}
+                  >
+                    {SPJ_LANGUAGES.map((lang) => (
+                      <option key={lang} value={lang}>{lang}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>{t('admin.spjCode')}</label>
+                  <textarea
+                    className="form-textarea spj-code-editor"
+                    rows={12}
+                    value={spjCode}
+                    onChange={(e) => setSpjCode(e.target.value)}
+                    placeholder={t('admin.spjPlaceholder')}
+                    disabled={spjSaving}
+                    style={{ fontFamily: 'monospace', fontSize: '13px' }}
+                  />
+                </div>
+                <div className="form-actions">
+                  {selectedProblemJudgeType === 'spj' && (
+                    <button className="btn btn-danger btn-sm" onClick={handleDeleteSpj} disabled={spjSaving}>
+                      <Trash2 size={14} /> {t('common.delete')}
+                    </button>
+                  )}
+                  <button className="btn btn-primary btn-sm" onClick={handleSaveSpj} disabled={spjSaving || !spjCode.trim()}>
+                    <Save size={14} /> {spjSaving ? t('admin.saving') : t('admin.spjSave')}
+                  </button>
                 </div>
               </>
             )}

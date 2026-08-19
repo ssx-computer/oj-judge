@@ -26,6 +26,10 @@ export default function AdminProblems() {
   const [problemPage, setProblemPage] = useState(1);
   const [editingProblem, setEditingProblem] = useState<any>(null);
   const [editForm, setEditForm] = useState<any>({});
+  // 分类标签树管理:标签树 + 当前编辑题目的已选标签
+  const [tagTree, setTagTree] = useState<any[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<number>>(new Set());
+  const [tagTreeLoading, setTagTreeLoading] = useState(false);
   const [actionLog, setActionLog] = useState<string[]>([]);
   const [actionStatus, setActionStatus] = useState<string>('');
   const [isExporting, setIsExporting] = useState(false);
@@ -87,14 +91,33 @@ export default function AdminProblems() {
       difficulty: problem.difficulty || 'Easy',
       is_public: !!problem.is_public,
     });
+    // 加载该题已关联的分类标签
+    setSelectedTagIds(new Set());
+    api.getProblemTagsById(problem.id)
+      .then((data) => setSelectedTagIds(new Set(data.tags.map((t: any) => t.id))))
+      .catch(() => {});
   };
+
+  // 标签树仅在编辑表单打开时加载一次
+  useEffect(() => {
+    if (editingProblem !== null && tagTree.length === 0) {
+      setTagTreeLoading(true);
+      api.getTagsTree()
+        .then((data) => setTagTree(data.categories || []))
+        .catch(() => setTagTree([]))
+        .finally(() => setTagTreeLoading(false));
+    }
+  }, [editingProblem, tagTree.length]);
 
   const handleSaveEdit = async (id: number) => {
     try {
       await api.updateProblem(id, editForm);
+      // 保存分类标签关联(替换式)
+      await api.setProblemTags(id, [...selectedTagIds]);
       addToast('success', t('admin.problemUpdated'));
       setEditingProblem(null);
       setEditForm({});
+      setSelectedTagIds(new Set());
       refresh();
     } catch (e: any) {
       addToast('error', e.message || t('common.error'));
@@ -104,6 +127,7 @@ export default function AdminProblems() {
   const handleCancelEdit = () => {
     setEditingProblem(null);
     setEditForm({});
+    setSelectedTagIds(new Set());
   };
 
   const appendActionLog = (message: string) => {
@@ -371,6 +395,39 @@ export default function AdminProblems() {
                       />
                       {t('admin.public')}
                     </label>
+                  </div>
+                  <div className="form-group">
+                    <label>{t('admin.tagsCategoryTree')}</label>
+                    {tagTreeLoading ? (
+                      <span className="text-muted">{t('common.loading')}</span>
+                    ) : tagTree.length === 0 ? (
+                      <span className="text-muted">{t('admin.tagsNoCategories')}</span>
+                    ) : (
+                      <div className="problem-tag-tree-select">
+                        {tagTree.map((cat: any) => (
+                          <div key={cat.id} className="problem-tag-tree-category">
+                            <span className="tag-tree-category-name">{cat.name}:</span>
+                            <div className="tag-tree-tags">
+                              {cat.tags?.map((tag: any) => (
+                                <label key={tag.id} className="tag-tree-tag-item">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedTagIds.has(tag.id)}
+                                    onChange={(e) => {
+                                      const next = new Set(selectedTagIds);
+                                      if (e.target.checked) next.add(tag.id);
+                                      else next.delete(tag.id);
+                                      setSelectedTagIds(next);
+                                    }}
+                                  />
+                                  <span className="tag-chip small">{tag.name}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="form-actions">
                     <button className="btn btn-primary btn-sm" onClick={() => handleSaveEdit(p.id)}>

@@ -7,7 +7,7 @@ import RatingBadge from '../components/RatingBadge';
 import { SkeletonTable } from '../components/Skeleton';
 import { getRatingColor } from '../utils/rating';
 import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
-import { Trophy, Calendar, Users, ChevronRight, UserPlus, CheckCircle, Clock, Eye, MessageSquare, BookOpen, Timer, Edit3, XCircle, AlertCircle, Play, Sparkles, TrendingUp, TrendingDown, Bell, Plus, Send, X, Download, Copy, Award, Image } from 'lucide-react';
+import { Trophy, Calendar, Users, ChevronRight, UserPlus, CheckCircle, Clock, Eye, MessageSquare, BookOpen, Timer, Edit3, XCircle, AlertCircle, Play, Sparkles, TrendingUp, TrendingDown, Bell, Plus, Send, X, Download, Copy, Award, Image, Trash2 } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import './ContestDetail.css';
@@ -145,6 +145,19 @@ export default function ContestDetail() {
       }
       addToast('success', t('contests.announcementDeleted'));
       fetchAnnouncements();
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
+  };
+
+  // 团队比赛:主办方/管理员从比赛中移除题目
+  const handleRemoveContestProblem = async (problemId: number) => {
+    if (!isTeamMatch || !teamId || !matchId) return;
+    if (!window.confirm(t('teams.confirmRemoveContestProblem'))) return;
+    try {
+      await api.removeTeamContestProblem(Number(teamId), Number(matchId), problemId);
+      addToast('success', t('teams.problemRemovedFromContest'));
+      await fetchProblems();
     } catch (e: any) {
       addToast('error', e.message || t('common.error'));
     }
@@ -1012,6 +1025,16 @@ export default function ContestDetail() {
                       >
                         <MessageSquare size={14} />
                       </Link>
+                      {isTeamMatch && isTeamManager && (
+                        <button
+                          className="action-link"
+                          style={{ color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                          onClick={() => handleRemoveContestProblem(problem.problem_id)}
+                          title={t('teams.removeProblem')}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </span>
                   </div>
                   );
