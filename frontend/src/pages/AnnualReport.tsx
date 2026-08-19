@@ -102,7 +102,7 @@ export default function AnnualReport() {
                 {(() => {
                   const max = Math.max(1, ...report.monthly.map((m: any) => m.total));
                   return report.monthly.map((m: any) => (
-                    <div key={m.month} className="monthly-col" title={`${m.month}: ${m.accepted} AC / ${m.total} 提交`}>
+                    <div key={m.month} className="monthly-col" title={`${m.month}: ${m.accepted} AC / ${m.total} ${t('annualReport.submissions')}`}>
                       <div className="monthly-bars">
                         <div className="monthly-ac" style={{ height: `${(m.accepted / max) * 100}%` }} />
                         <div className="monthly-total" style={{ height: `${(m.total / max) * 100}%` }} />

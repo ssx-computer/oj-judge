@@ -113,6 +113,8 @@ uploads.post('/image', authMiddleware, async (c) => {
 
   const body = await c.req.parseBody();
   const file = body['file'];
+  // 是否公开(默认公开):false/0 表示私有,仅本人或 upload_admin 可下载
+  const isPublic = body['is_public'] === undefined ? 1 : (body['is_public'] === 'false' || body['is_public'] === '0' ? 0 : 1);
 
   if (!file || !(file instanceof File)) {
     return c.json({ success: false, error: { message: 'No file provided', code: 'BAD_REQUEST' } }, 400);
@@ -166,8 +168,8 @@ uploads.post('/image', authMiddleware, async (c) => {
 
   // Save to database
   const result = await c.env.DB.prepare(
-    'INSERT INTO uploads (user_id, filename, original_name, file_type, mime_type, size_bytes, github_path) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(user.userId, filename, file.name, 'image', file.type, file.size, githubPath).run();
+    'INSERT INTO uploads (user_id, filename, original_name, file_type, mime_type, size_bytes, github_path, is_public) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(user.userId, filename, file.name, 'image', file.type, file.size, githubPath, isPublic).run();
 
   const uploadId = result.meta.last_row_id;
 
@@ -183,6 +185,7 @@ uploads.post('/image', authMiddleware, async (c) => {
       original_name: file.name,
       file_type: 'image',
       size_bytes: file.size,
+      is_public: isPublic,
     },
   });
 });
@@ -356,8 +359,11 @@ uploads.get('/download/:id', optionalAuthMiddleware, async (c) => {
     return c.json({ success: false, error: { message: 'File not found', code: 'NOT_FOUND' } }, 404);
   }
 
-  // 私有文件鉴权:非公开的 file 类型仅上传者本人或 upload_admin 可下载
-  if (upload.is_public !== 1 && upload.file_type !== 'image') {
+  // 私有文件鉴权:非公开(is_public=0)的文件/图片仅上传者本人或 upload_admin 可下载
+  // 兼容旧数据:历史文件 is_public 可能为 NULL(视为公开);历史图片始终视为公开
+  const isPrivate = upload.is_public !== undefined && upload.is_public !== null && upload.is_public !== 1;
+  const isLegacyImage = upload.file_type === 'image' && (upload.is_public === undefined || upload.is_public === null);
+  if (isPrivate && !isLegacyImage) {
     const user = c.get('user');
     const isUploadAdmin = user && (user.role === 'admin' || user.role === 'super_admin' || user.userId === 1
       || (Array.isArray(user?.permissions) && user.permissions.includes('upload_admin')));

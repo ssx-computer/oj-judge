@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { List, ChevronRight, User, StickyNote, Hash, Copy, Share2, CheckCircle } from 'lucide-react';
+import { List, ChevronRight, User, StickyNote, Hash, Copy, Share2, CheckCircle, Trash2 } from 'lucide-react';
 import { t } from '../i18n';
 import { useToastStore } from '../store/toast';
 import { useAuthStore } from '../store/auth';
@@ -39,6 +39,19 @@ export default function ProblemListDetail() {
     }).catch(() => {
       addToast('error', t('common.error'));
     });
+  };
+
+  // 删除题单(创建者或管理员)
+  const handleDelete = async () => {
+    if (!id) return;
+    if (!window.confirm(t('problemListDetail.deleteConfirm'))) return;
+    try {
+      await api.deleteProblemList(Number(id));
+      addToast('success', t('problemListDetail.deleteDone'));
+      navigate('/lists');
+    } catch (e: any) {
+      addToast('error', e.message || t('common.error'));
+    }
   };
 
   const fetchList = useCallback(async () => {
@@ -106,6 +119,11 @@ export default function ProblemListDetail() {
             <button className="btn btn-secondary btn-sm" onClick={handleShare} title={t('problemListDetail.share')}>
               <Share2 size={14} /> {t('problemListDetail.share')}
             </button>
+            {user && (list.user_id === user.id || user.role === 'admin' || user.role === 'super_admin' || user.id === 1) && (
+              <button className="btn btn-danger btn-sm" onClick={handleDelete} title={t('problemListDetail.delete')}>
+                <Trash2 size={14} /> {t('problemListDetail.delete')}
+              </button>
+            )}
           </div>
         </div>
 

@@ -11,7 +11,7 @@ import { DIFFICULTY_COLORS } from '../constants';
 import RatingBadge from '../components/RatingBadge';
 import { getRatingColor, getRatingTier } from '../utils/rating';
 import { parseContestTimeToMs, formatContestTime } from '../utils/contestTime';
-import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, Mail, Users, TrendingUp, Award, Download, Tag } from 'lucide-react';
+import { Trophy, Target, Clock, Calendar, UserX, Swords, Edit3, Key, X, Check, Mail, Users, TrendingUp, Award, Download, Tag, BookX } from 'lucide-react';
 import { t } from '../i18n';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import FollowButton from '../components/FollowButton';
@@ -227,6 +227,10 @@ export default function Profile() {
             <Link to="/annual-report" className="btn btn-secondary btn-sm" title={t('annualReport.title')}>
               <TrendingUp size={14} />
               {t('annualReport.title')}
+            </Link>
+            <Link to="/wrong-problems" className="btn btn-secondary btn-sm" title={t('wrongProblems.title')}>
+              <BookX size={14} />
+              {t('wrongProblems.title')}
             </Link>
           </div>
         )}

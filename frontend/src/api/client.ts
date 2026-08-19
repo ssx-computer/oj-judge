@@ -1756,10 +1756,11 @@ class ApiClient {
     });
   }
 
-  async uploadImage(file: File) {
+  async uploadImage(file: File, isPublic = true) {
     const formData = new FormData();
     formData.append('file', file);
-    return this.request<{ id: number; url: string; filename: string; original_name: string; file_type: string; size_bytes: number }>('/uploads/image', {
+    formData.append('is_public', isPublic ? '1' : '0');
+    return this.request<{ id: number; url: string; filename: string; original_name: string; file_type: string; size_bytes: number; is_public?: number }>('/uploads/image', {
       method: 'POST',
       body: formData,
     }, true);

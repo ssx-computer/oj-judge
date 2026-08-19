@@ -5,7 +5,7 @@ import { t } from '../i18n';
 import {
   Home, Target, Swords, Trophy, BookOpen, GraduationCap,
   MessageSquare, PenSquare, Users, Mail, ListChecks,
-  Ticket, Heart, FolderOpen, Bot, Shield, X,
+  Ticket, Heart, FolderOpen, Bot, Shield, X, Megaphone,
 } from 'lucide-react';
 import { usePermissions } from '../hooks/usePermissions';
 import './Sidebar.css';
@@ -36,6 +36,7 @@ export default function Sidebar({ open, onClose, unreadMsg }: SidebarProps) {
     { to: '/training', icon: GraduationCap, label: t('nav.training') },
     { to: '/discussions/all', icon: MessageSquare, label: t('nav.discussions') },
     { to: '/blogs', icon: PenSquare, label: t('nav.blogs') },
+    { to: '/announcements', icon: Megaphone, label: t('nav.announcements') },
   ];
 
   const userNav = user ? [

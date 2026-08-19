@@ -90,7 +90,7 @@ export default function SearchPage() {
         return (
           <div className="search-result">
             <div className="search-result-title"><MessageSquare size={15} /> <Link to={r.url}>{highlightText(r.title, query)}</Link></div>
-            <div className="search-result-meta"><span>by {r.username}</span><span>{r.reply_count ?? 0} 回复</span></div>
+            <div className="search-result-meta"><span>by {r.username}</span><span>{r.reply_count ?? 0} {t('search.replies')}</span></div>
           </div>
         );
       case 'solution':

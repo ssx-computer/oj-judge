@@ -57,6 +57,8 @@ export default function ImageUploadButton({ onInsert }: ImageUploadButtonProps) 
   const addToast = useToastStore((s) => s.addToast);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  // 是否公开:私密图片仅本人或管理员可查看
+  const [isPublic, setIsPublic] = useState(true);
   const getImageUploadEnabled = useSettingsStore((s) => s.getImageUploadEnabled);
   const perms = usePermissions();
 
@@ -72,7 +74,7 @@ export default function ImageUploadButton({ onInsert }: ImageUploadButtonProps) 
     setUploading(true);
     try {
       const toUpload = await compressImage(file);
-      const result = await api.uploadImage(toUpload);
+      const result = await api.uploadImage(toUpload, isPublic);
       const markdown = `![${result.original_name}](${result.url})`;
       onInsert(markdown);
       addToast('success', t('common.uploadSuccess'));
@@ -103,6 +105,15 @@ export default function ImageUploadButton({ onInsert }: ImageUploadButtonProps) 
         {uploading ? <Loader2 size={14} className="spin" /> : <ImageIcon size={14} />}
         {t('common.insertImage')}
       </button>
+      <label className="image-upload-private" title={t('common.uploadPrivateHint')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 8, fontSize: 12, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+        <input
+          type="checkbox"
+          checked={!isPublic}
+          onChange={(e) => setIsPublic(!e.target.checked)}
+          disabled={uploading}
+        />
+        {t('common.uploadPrivate')}
+      </label>
     </>
   );
 }
