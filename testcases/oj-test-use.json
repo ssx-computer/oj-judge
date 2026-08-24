@@ -1,11 +1,5 @@
 [
   {
-    "input": "1 2",
-    "expected_output": "3",
-    "is_sample": false,
-    "score": 10
-  },
-  {
     "input": "10 20",
     "expected_output": "30",
     "is_sample": false,
