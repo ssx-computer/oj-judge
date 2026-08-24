@@ -14,9 +14,16 @@ jobs:
         with:
           fetch-depth: 2
           persist-credentials: false
-
-      - name: Extract submission info
-        id: info
+      - name: Debug DNS
+        run: |
+          cho "=== nslookup ==="
+          nslookup oj.ssx666.qzz.io || true
+          echo "=== dig ==="
+          dig +short oj.ssx666.qzz.io || true
+          echo "=== curl -v ==="
+            curl -v --max-time 10 https://oj.ssx666.qzz.io || true
+          - name: Extract submission info
+            id: info
         run: |
           FILES=$(git diff --name-only HEAD^ HEAD 2>/dev/null | grep 'submissions/' | head -1)
           if [ -z "$FILES" ]; then
