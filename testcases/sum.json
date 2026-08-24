@@ -1,0 +1,8 @@
+[
+  {
+    "input": "10",
+    "expected_output": "3628800",
+    "is_sample": true,
+    "score": 100
+  }
+]
