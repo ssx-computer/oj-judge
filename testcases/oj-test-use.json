@@ -4,11 +4,5 @@
     "expected_output": "Hello World",
     "is_sample": true,
     "score": 10
-  },
-  {
-    "input": "Hello World",
-    "expected_output": "Hello World",
-    "is_sample": true,
-    "score": 10
   }
 ]
