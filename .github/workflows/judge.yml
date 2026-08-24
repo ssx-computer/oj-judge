@@ -39,7 +39,23 @@ jobs:
           esac
           echo "language=$LANGUAGE" >> $GITHUB_OUTPUT
           echo "Detected: id=$SUBMISSION_ID, lang=$LANGUAGE, file=$FILES"
-
+      - name: Debug connection
+        env:
+          WORKER_API: ${{ secrets.WORKER_API }}
+          CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
+        run: |
+          echo "=== WORKER_API check ==="
+          if [ -z "$WORKER_API" ]; then
+            echo "WORKER_API is EMPTY"
+          else
+            echo "WORKER_API length: ${#WORKER_API}"
+            echo "WORKER_API prefix: ${WORKER_API:0:20}"
+          fi
+          echo "=== DNS resolution ==="
+          nslookup oj.ssx666.qzz.io || true
+          echo "=== curl test ==="
+          curl -v --max-time 10 "${WORKER_API}/api/v1/internal/judge-data?submission_id=1" \
+            -H "Authorization: Bearer ${CALLBACK_SECRET}" || true
       - name: Fetch judge data
         id: judge_data
         env:
