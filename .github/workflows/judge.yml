@@ -14,6 +14,9 @@ jobs:
         with:
           fetch-depth: 2
           persist-credentials: false
+
+      - name: Extract submission info
+        id: info
         run: |
           FILES=$(git diff --name-only HEAD^ HEAD 2>/dev/null | grep 'submissions/' | head -1)
           if [ -z "$FILES" ]; then
